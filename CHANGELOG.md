@@ -5,10 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.0] - 2026-08-04
 
 ### Added
 
+- **iamcredentials:** IAM Service Account Credentials REST API (`iamcredentials.googleapis.com` v1) — `generateAccessToken` for service-account impersonation flows (`ImpersonatedCredentials` in the GCP SDKs), with scope validation and lifetime capping at 3600s; vended tokens are opaque emulator stubs
+- **gcs:** service account authentication support
 - **docker:** every emulator-created container and volume now carries the shared Floci labels `floci=true`, `floci_emulator=floci-gcp`, and (when configured) `floci_namespace` — `docker ps --filter label=floci_emulator=floci-gcp` and `docker volume prune --filter label=floci_emulator=floci-gcp` target this emulator alone, while `label=floci=true` matches every Floci emulator
 - **docker:** `FLOCI_GCP_DOCKER_RESOURCE_NAMESPACE` (`floci-gcp.docker.resource-namespace`) — optional namespace inserted into sidecar container/volume names (`floci-gcp-<ns>-…`) so parallel emulator instances on one Docker host don't collide
 
@@ -16,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **docker:** sidecar container names now carry the cloud token: `floci-cloudrun-…` → `floci-gcp-cloudrun-…`, `floci-kafka-…` → `floci-gcp-kafka-…`, `floci-cloudsql-…` → `floci-gcp-cloudsql-…`, and `floci-gke-<cluster>` → `floci-gcp-gke-<project>-<cluster>` (GKE containers are now also project-scoped, so equal cluster ids in different projects no longer collide). `FLOCI_GCP_SERVICES_CLOUDRUN_EXECUTION_CONTAINER_NAME_PREFIX` was removed — Cloud Run container names are always `floci-gcp-[<ns>-]cloudrun-…`; use `FLOCI_GCP_DOCKER_RESOURCE_NAMESPACE` to distinguish parallel instances. Containers created by an older version are not reaped automatically; remove them once with `docker rm -f $(docker ps -aq --filter name=^/floci-)`. If you reach sidecars by container name over a shared Docker network (e.g. `floci-kafka-x:9092`, `floci-gke-c1:6443` in compose files or client config), update those references
 - **docker:** Cloud SQL, Kafka, and GKE volume names are now persisted with the resource. Volumes created by older versions keep their original names (`floci-gcp-cloudsql-<id>`, `floci-gcp-kafka-<id>`, `floci-gke-<cluster>`) and are adopted transparently — no data is moved. Pre-existing volumes keep their old `floci-gcp=true` label and won't match `label=floci=true` prune filters. Rollback caveat: after downgrading, resources created on this version resolve to recomputed legacy names, so their volumes are left behind rather than reused; the data survives and can be recovered by renaming the volume
+- **core:** DNS, docker, and storage cluster internals converged on the shared floci-aws baseline — cross-emulator alignment, no behavior change intended
+- **logging:** health endpoint polling (`/health`, `/_floci-gcp/health`) now logs at `DEBUG` instead of `INFO`, keeping default logs free of healthcheck noise
+- **docker:** the published native image no longer carries two copies of the ~196 MB binary — the executable bit is set at `COPY --chmod` time instead of a post-copy `mv`/`chmod` layer, cutting the uncompressed image size roughly in half
+
+### Fixed
+
+- **pubsub:** subscription filters are now applied when delivering messages — pull, streaming pull, and push delivery skip non-matching messages instead of delivering everything
+- **pubsub:** the subscription `filter` is immutable after creation, as in GCP — `subscriptions.patch` naming `filter` in its update mask is rejected with `INVALID_ARGUMENT` regardless of the value, and a maskless patch no longer clears the stored filter
+- **gcs:** URI-encoded object names (`/`, spaces, `+`, percent-encoded sequences) round-trip exactly as real GCS preserves them
+- **gcs:** Pub/Sub notification request and response bodies use snake_case field names
 
 ## [0.5.0] - 2026-07-09
 
@@ -134,7 +146,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/floci-io/floci-gcp/compare/0.5.0...HEAD
+[Unreleased]: https://github.com/floci-io/floci-gcp/compare/0.6.0...HEAD
+[0.6.0]: https://github.com/floci-io/floci-gcp/compare/0.5.0...0.6.0
 [0.5.0]: https://github.com/floci-io/floci-gcp/compare/0.4.0...0.5.0
 [0.4.0]: https://github.com/floci-io/floci-gcp/compare/0.3.0...0.4.0
 [0.3.0]: https://github.com/floci-io/floci-gcp/compare/0.2.1...0.3.0
