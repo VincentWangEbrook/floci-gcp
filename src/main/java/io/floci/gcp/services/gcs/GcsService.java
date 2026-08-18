@@ -12,6 +12,7 @@ import io.floci.gcp.core.common.ServiceRegistry;
 import io.floci.gcp.core.storage.StorageBackend;
 import io.floci.gcp.core.storage.StorageFactory;
 import io.floci.gcp.services.gcs.model.GcsBucket;
+import io.floci.gcp.services.gcs.model.GcsObjectDownload;
 import io.floci.gcp.services.gcs.model.GcsObjectMeta;
 import io.floci.gcp.services.gcs.model.GcsObjectPreconditions;
 import io.floci.gcp.services.gcs.model.ResumableUpload;
@@ -394,6 +395,21 @@ public class GcsService {
         return data;
     }
 
+    public GcsObjectDownload getObjectForDownload(String bucket, String objectName, String generation,
+            GcsCustomerEncryption customerEncryption) {
+        // Every mutation path holds this lock, so metadata and bytes resolved
+        // under it always come from the same generation.
+        synchronized (objectLock(bucket, objectName)) {
+            if (generation != null) {
+                return new GcsObjectDownload(getObjectMeta(bucket, objectName, generation),
+                        getObjectData(bucket, objectName, generation, customerEncryption));
+            }
+            var meta = getObjectMeta(bucket, objectName);
+            return new GcsObjectDownload(meta,
+                    getObjectData(bucket, objectName, meta.getGeneration(), customerEncryption));
+        }
+    }
+
     private static void checkCustomerEncryption(GcsObjectMeta meta, GcsCustomerEncryption customerEncryption) {
         if (meta == null || meta.getCustomerEncryption() == null) {
             return;
@@ -552,17 +568,21 @@ public class GcsService {
             throw GcpException.notFound("Bucket not found: " + bucket);
         }
         byte[] composed = new byte[0];
+        GcsObjectMeta firstSourceMeta = null;
         for (String src : sourceNames) {
-            byte[] data = getObjectData(bucket, src, GcsCustomerEncryption.none());
-            byte[] merged = new byte[composed.length + data.length];
+            var source = getObjectForDownload(bucket, src, null, GcsCustomerEncryption.none());
+            if (firstSourceMeta == null) {
+                firstSourceMeta = source.meta();
+            }
+            var data = source.data();
+            var merged = new byte[composed.length + data.length];
             System.arraycopy(composed, 0, merged, 0, composed.length);
             System.arraycopy(data, 0, merged, composed.length, data.length);
             composed = merged;
         }
         String resolvedType = contentType;
-        if (resolvedType == null && !sourceNames.isEmpty()) {
-            resolvedType = objectMetaStore.get(objectKey(bucket, sourceNames.get(0)))
-                    .map(GcsObjectMeta::getContentType).orElse(null);
+        if (resolvedType == null && firstSourceMeta != null) {
+            resolvedType = firstSourceMeta.getContentType();
         }
         return putObject(bucket, destObject, resolvedType != null ? resolvedType : "application/octet-stream",
                 composed, GcsCustomerEncryption.none(), preconditions, baseUrl);
@@ -619,17 +639,19 @@ public class GcsService {
 
     public GcsObjectMeta copyObject(String srcBucket, String srcObject, String dstBucket, String dstObject,
             GcsObjectPreconditions preconditions, String baseUrl) {
+        LOG.debugf("copyObject src=%s/%s dst=%s/%s", srcBucket, srcObject, dstBucket, dstObject);
+        // Read the source before taking the destination lock. Nesting two
+        // stripe locks could deadlock with a copy running in the other direction.
+        var src = getObjectForDownload(srcBucket, srcObject, null, GcsCustomerEncryption.none());
         synchronized (objectLock(dstBucket, dstObject)) {
             checkPreconditions(dstBucket, dstObject, preconditions);
-            return copyObjectLocked(srcBucket, srcObject, dstBucket, dstObject, baseUrl);
+            return copyObjectLocked(src, dstBucket, dstObject, baseUrl);
         }
     }
 
-    private GcsObjectMeta copyObjectLocked(String srcBucket, String srcObject, String dstBucket, String dstObject, String baseUrl) {
-        LOG.debugf("copyObject src=%s/%s dst=%s/%s", srcBucket, srcObject, dstBucket, dstObject);
-        GcsObjectMeta srcMeta = getObjectMeta(srcBucket, srcObject);
-        byte[] data = getObjectData(srcBucket, srcObject, GcsCustomerEncryption.none());
-        GcsObjectMeta dstMeta = putObjectLocked(dstBucket, dstObject, srcMeta.getContentType(), data,
+    private GcsObjectMeta copyObjectLocked(GcsObjectDownload src, String dstBucket, String dstObject, String baseUrl) {
+        var srcMeta = src.meta();
+        var dstMeta = putObjectLocked(dstBucket, dstObject, srcMeta.getContentType(), src.data(),
                 GcsCustomerEncryption.none(), null, baseUrl);
         if (srcMeta.getMetadata() != null) {
             dstMeta.setMetadata(new LinkedHashMap<>(srcMeta.getMetadata()));

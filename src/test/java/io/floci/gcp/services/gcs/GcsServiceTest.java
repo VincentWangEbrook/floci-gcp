@@ -17,6 +17,7 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -103,6 +104,68 @@ class GcsServiceTest {
     }
 
     @Test
+    void getObjectForDownloadReturnsMatchingMetaAndData() {
+        service.createBucket("bucket", "p1", BASE_URL, Map.of());
+        var data = "payload".getBytes(StandardCharsets.UTF_8);
+        var stored = service.putObject("bucket", "obj.txt", "text/plain", data,
+                GcsCustomerEncryption.none(), BASE_URL);
+
+        var download = service.getObjectForDownload("bucket", "obj.txt", null, GcsCustomerEncryption.none());
+
+        assertEquals(stored.getGeneration(), download.meta().getGeneration());
+        assertArrayEquals(data, download.data());
+    }
+
+    @Test
+    void getObjectForDownloadWithExplicitGeneration() {
+        service.createBucket("bucket", "p1", BASE_URL, Map.of());
+        var data = "payload".getBytes(StandardCharsets.UTF_8);
+        var stored = service.putObject("bucket", "obj.txt", "text/plain", data,
+                GcsCustomerEncryption.none(), BASE_URL);
+
+        var download = service.getObjectForDownload("bucket", "obj.txt", stored.getGeneration(),
+                GcsCustomerEncryption.none());
+
+        assertEquals(stored.getGeneration(), download.meta().getGeneration());
+        assertArrayEquals(data, download.data());
+
+        var ex = assertThrows(GcpException.class,
+                () -> service.getObjectForDownload("bucket", "obj.txt", "999999", GcsCustomerEncryption.none()));
+        assertEquals("NOT_FOUND", ex.getGcpStatus());
+    }
+
+    @Test
+    void copyObjectCopiesDataContentTypeAndMetadata() {
+        service.createBucket("bucket", "p1", BASE_URL, Map.of());
+        var data = "payload".getBytes(StandardCharsets.UTF_8);
+        var stored = service.putObject("bucket", "src.txt", "text/plain", data,
+                GcsCustomerEncryption.none(), Map.of("origname", "src.txt"), BASE_URL);
+        assertNotNull(stored.getMetadata());
+
+        var copied = service.copyObject("bucket", "src.txt", "bucket", "dst.txt", BASE_URL);
+
+        assertEquals("text/plain", copied.getContentType());
+        assertEquals(Map.of("origname", "src.txt"), copied.getMetadata());
+        assertArrayEquals(data, service.getObjectData("bucket", "dst.txt", GcsCustomerEncryption.none()));
+    }
+
+    @Test
+    void composeObjectConcatenatesSourcesAndInheritsFirstContentType() {
+        service.createBucket("bucket", "p1", BASE_URL, Map.of());
+        service.putObject("bucket", "part1.txt", "text/plain", "foo".getBytes(StandardCharsets.UTF_8),
+                GcsCustomerEncryption.none(), BASE_URL);
+        service.putObject("bucket", "part2.txt", "text/csv", "bar".getBytes(StandardCharsets.UTF_8),
+                GcsCustomerEncryption.none(), BASE_URL);
+
+        var composed = service.composeObject("bucket", "all.txt", List.of("part1.txt", "part2.txt"),
+                null, BASE_URL);
+
+        assertEquals("text/plain", composed.getContentType());
+        assertArrayEquals("foobar".getBytes(StandardCharsets.UTF_8),
+                service.getObjectData("bucket", "all.txt", GcsCustomerEncryption.none()));
+    }
+
+    @Test
     void objectDataSurvivesPersistentStoreReload() {
         GcsService first = persistentService(tempDir);
         first.createBucket("bucket", "p1", BASE_URL, Map.of());
@@ -181,6 +244,40 @@ class GcsServiceTest {
         GcpException ex = assertThrows(GcpException.class,
                 () -> service.getBucket("bucket"));
         assertEquals("NOT_FOUND", ex.getGcpStatus());
+    }
+
+    @Test
+    void concurrentOverwriteNeverMixesGenerations() throws Exception {
+        service.createBucket("race-bucket", "p1", BASE_URL, Map.of());
+        var payloads = Map.of(
+                "a", "aaaaaaaa".getBytes(StandardCharsets.UTF_8),
+                "b", "bb".getBytes(StandardCharsets.UTF_8));
+        service.putObject("race-bucket", "obj.txt", "text/plain", payloads.get("a"),
+                GcsCustomerEncryption.none(), Map.of("tag", "a"), BASE_URL);
+
+        var stop = new AtomicBoolean(false);
+        var writer = new Thread(() -> {
+            var flip = false;
+            while (!stop.get()) {
+                var tag = flip ? "a" : "b";
+                service.putObject("race-bucket", "obj.txt", "text/plain", payloads.get(tag),
+                        GcsCustomerEncryption.none(), Map.of("tag", tag), BASE_URL);
+                flip = !flip;
+            }
+        });
+        writer.start();
+        try {
+            for (var i = 0; i < 2_000; i++) {
+                var download = service.getObjectForDownload(
+                        "race-bucket", "obj.txt", null, GcsCustomerEncryption.none());
+                var expected = payloads.get(download.meta().getMetadata().get("tag"));
+                assertArrayEquals(expected, download.data(),
+                        "bytes belong to a different generation than the metadata");
+            }
+        } finally {
+            stop.set(true);
+            writer.join();
+        }
     }
 
     private static GcsService persistentService(Path root) {

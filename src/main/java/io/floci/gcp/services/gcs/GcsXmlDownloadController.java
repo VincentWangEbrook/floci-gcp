@@ -54,14 +54,8 @@ public class GcsXmlDownloadController {
             @HeaderParam("Range") String rangeHeader) {
         GcsSignedUrl.checkNotExpired(uriInfo);
         GcsCustomerEncryption customerEncryption = GcsCustomerEncryption.fromKeySha256(customerEncryptionKeySha256);
-        if (generation != null) {
-            byte[] data = service.getObjectData(bucket, objectPath, generation, customerEncryption);
-            GcsObjectMeta meta = service.getObjectMeta(bucket, objectPath, generation);
-            return GcsMediaResponses.mediaResponse(data, meta.getContentType(), rangeHeader);
-        }
-        byte[] data = service.getObjectData(bucket, objectPath, customerEncryption);
-        GcsObjectMeta meta = service.getObjectMeta(bucket, objectPath);
-        return GcsMediaResponses.mediaResponse(data, meta.getContentType(), rangeHeader);
+        var download = service.getObjectForDownload(bucket, objectPath, generation, customerEncryption);
+        return GcsMediaResponses.mediaResponse(download.data(), download.meta(), rangeHeader);
     }
 
     @PUT
@@ -84,11 +78,12 @@ public class GcsXmlDownloadController {
     }
 
     private static Map<String, String> googMetaHeaders(HttpHeaders headers) {
+        var prefix = GcsMediaResponses.META_HEADER_PREFIX;
         var metadata = new LinkedHashMap<String, String>();
         for (var headerName : headers.getRequestHeaders().keySet()) {
             var lower = headerName.toLowerCase(Locale.ROOT);
-            if (lower.startsWith("x-goog-meta-") && lower.length() > "x-goog-meta-".length()) {
-                metadata.put(lower.substring("x-goog-meta-".length()), headers.getHeaderString(headerName));
+            if (lower.startsWith(prefix) && lower.length() > prefix.length()) {
+                metadata.put(lower.substring(prefix.length()), headers.getHeaderString(headerName));
             }
         }
         return metadata;
