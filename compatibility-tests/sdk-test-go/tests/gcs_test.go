@@ -70,6 +70,30 @@ func TestGCS(t *testing.T) {
 		assert.Equal(t, content, buf.String())
 	})
 
+	t.Run("DownloadReaderAttrs", func(t *testing.T) {
+		obj := client.Bucket(bucketName).Object(objectName)
+		attrs, err := obj.Attrs(ctx)
+		require.NoError(t, err)
+
+		r, err := obj.NewReader(ctx)
+		require.NoError(t, err)
+		defer r.Close()
+
+		// The reader attrs come from the x-goog-* headers of the media
+		// response, not from the object resource. Without them the values
+		// silently degrade here, and the Rust SDK fails every read.
+		assert.Equal(t, attrs.Generation, r.Attrs.Generation)
+		assert.Equal(t, attrs.Metageneration, r.Attrs.Metageneration)
+		assert.Equal(t, int64(len(content)), r.Attrs.Size)
+		assert.Equal(t, attrs.CRC32C, r.Attrs.CRC32C)
+		assert.NotZero(t, r.Attrs.CRC32C)
+
+		// A full read verifies the payload against the crc32c announced in
+		// x-goog-hash.
+		_, err = io.Copy(io.Discard, r)
+		require.NoError(t, err)
+	})
+
 	t.Run("ObjectMetadata", func(t *testing.T) {
 		attrs, err := client.Bucket(bucketName).Object(objectName).Attrs(ctx)
 		require.NoError(t, err)
@@ -133,6 +157,42 @@ func TestGCS(t *testing.T) {
 		_, err = buf.ReadFrom(r)
 		require.NoError(t, err)
 		assert.Equal(t, content, buf.String())
+	})
+
+	t.Run("ComposeObject", func(t *testing.T) {
+		bucket := client.Bucket(bucketName)
+		part1 := bucket.Object("compose-part1")
+		part2 := bucket.Object("compose-part2")
+		w := part1.NewWriter(ctx)
+		_, err := io.WriteString(w, "hello ")
+		require.NoError(t, err)
+		require.NoError(t, w.Close())
+		w = part2.NewWriter(ctx)
+		_, err = io.WriteString(w, "world")
+		require.NoError(t, err)
+		require.NoError(t, w.Close())
+
+		composed := bucket.Object("composed")
+		attrs, err := composed.ComposerFrom(part1, part2).Run(ctx)
+		require.NoError(t, err)
+
+		// Real GCS gives composite objects a componentCount and no MD5, so
+		// downloads validate crc32c only.
+		assert.Empty(t, attrs.MD5)
+		assert.EqualValues(t, 2, attrs.ComponentCount)
+		assert.NotZero(t, attrs.CRC32C)
+
+		r, err := composed.NewReader(ctx)
+		require.NoError(t, err)
+		defer r.Close()
+		var buf bytes.Buffer
+		_, err = buf.ReadFrom(r)
+		require.NoError(t, err)
+		assert.Equal(t, "hello world", buf.String())
+
+		require.NoError(t, part1.Delete(ctx))
+		require.NoError(t, part2.Delete(ctx))
+		require.NoError(t, composed.Delete(ctx))
 	})
 
 	t.Run("DeleteObject", func(t *testing.T) {
