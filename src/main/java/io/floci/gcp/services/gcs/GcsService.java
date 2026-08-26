@@ -11,10 +11,13 @@ import io.floci.gcp.core.common.ServiceProtocol;
 import io.floci.gcp.core.common.ServiceRegistry;
 import io.floci.gcp.core.storage.StorageBackend;
 import io.floci.gcp.core.storage.StorageFactory;
+import io.floci.gcp.services.gcs.model.CompletedResumableUpload;
 import io.floci.gcp.services.gcs.model.GcsBucket;
+import io.floci.gcp.services.gcs.model.GcsContentRange;
 import io.floci.gcp.services.gcs.model.GcsObjectDownload;
 import io.floci.gcp.services.gcs.model.GcsObjectMeta;
 import io.floci.gcp.services.gcs.model.GcsObjectPreconditions;
+import io.floci.gcp.services.gcs.model.ResumableChunkOutcome;
 import io.floci.gcp.services.gcs.model.ResumableUpload;
 import io.floci.gcp.services.gcs.model.StoredAcl;
 import io.floci.gcp.services.gcs.model.StoredNotification;
@@ -35,6 +38,7 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -48,6 +52,7 @@ public class GcsService {
 
     private static final Logger LOG = Logger.getLogger(GcsService.class);
     private static final int OBJECT_LOCK_COUNT = 256;
+    private static final int COMPLETED_RESUMABLE_UPLOAD_HISTORY = 1024;
 
     private final StorageBackend<String, GcsBucket> bucketStore;
     private final StorageBackend<String, GcsObjectMeta> objectMetaStore;
@@ -55,7 +60,15 @@ public class GcsService {
     private final StorageBackend<String, StoredAcl> aclStore;
     private final StorageBackend<String, StoredNotification> notificationStore;
     private final ConcurrentHashMap<String, ResumableUpload> resumableUploads = new ConcurrentHashMap<>();
+    private final Map<String, CompletedResumableUpload> completedResumableUploads = Collections.synchronizedMap(
+            new LinkedHashMap<>(16, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, CompletedResumableUpload> eldest) {
+                    return size() > COMPLETED_RESUMABLE_UPLOAD_HISTORY;
+                }
+            });
     private final Object[] objectLocks = createObjectLocks();
+    private final Object[] uploadLocks = createObjectLocks();
     private final AtomicLong generationSequence;
 
     private final ServiceRegistry serviceRegistry;
@@ -851,93 +864,70 @@ public class GcsService {
         return uploadId;
     }
 
-	public ResumableUpload getResumableUpload(String uploadId) {
-		ResumableUpload upload = resumableUploads.get(uploadId);
-		if (upload == null) {
-			LOG.warnf("getResumableUpload failed: upload not found uploadId=%s", uploadId);
-			throw GcpException.notFound("Resumable upload not found: " + uploadId);
-		}
-		return upload;
+	public ResumableUpload findResumableUpload(String uploadId) {
+		return resumableUploads.get(uploadId);
 	}
 
-    public GcsObjectMeta completeResumableUpload(String uploadId, byte[] data, String baseUrl) {
-        LOG.debugf("completeResumableUpload uploadId=%s size=%d", uploadId, data.length);
-        ResumableUpload upload = resumableUploads.get(uploadId);
-        if (upload == null) {
-            LOG.warnf("completeResumableUpload failed: upload not found uploadId=%s", uploadId);
-            throw GcpException.notFound("Resumable upload not found: " + uploadId);
+    // Every chunk of one session is handled under the same lock, so a retry that overlaps
+    // finalization waits and then replays the stored metadata instead of uploading twice.
+    public ResumableChunkOutcome applyResumableChunk(String uploadId, GcsContentRange range, byte[] data,
+            String baseUrl) {
+        synchronized (uploadLock(uploadId)) {
+            CompletedResumableUpload completed = completedResumableUploads.get(uploadId);
+            if (completed != null) {
+                return ResumableChunkOutcome.completed(completed.meta());
+            }
+            ResumableUpload upload = resumableUploads.get(uploadId);
+            if (upload == null) {
+                LOG.warnf("applyResumableChunk failed: upload not found uploadId=%s", uploadId);
+                throw GcpException.notFound("Resumable upload not found: " + uploadId);
+            }
+            if (range == null) {
+                byte[] combined = appendChunk(upload, upload.data().length, data);
+                validateResumableTotalSize(upload, (long) combined.length);
+                return ResumableChunkOutcome.completed(finishResumableUpload(uploadId, upload, combined, baseUrl));
+            }
+            if (range.statusQuery()) {
+                validateResumableTotalSize(upload, range.totalSize());
+                byte[] received = upload.data();
+                if (range.totalSize() != null && received.length == range.totalSize()) {
+                    return ResumableChunkOutcome.completed(
+                            finishResumableUpload(uploadId, upload, received, baseUrl));
+                }
+                return ResumableChunkOutcome.incomplete(received.length);
+            }
+            validateResumableTotalSize(upload, range.totalSize());
+            byte[] combined = appendChunk(upload, range.start(), data);
+            if (range.totalSize() == null || range.end() + 1 < range.totalSize()) {
+                resumableUploads.put(uploadId, new ResumableUpload(
+                        upload.bucket(), upload.objectName(), upload.contentType(), upload.customerEncryption(),
+                        upload.metadata(), upload.preconditions(), combined,
+                        upload.totalSize() != null ? upload.totalSize() : range.totalSize()));
+                return ResumableChunkOutcome.incomplete(combined.length);
+            }
+            if (combined.length != range.totalSize()) {
+                throw GcpException.invalidArgument(
+                        "Content-Range total size does not match uploaded bytes: " + range.totalSize());
+            }
+            return ResumableChunkOutcome.completed(finishResumableUpload(uploadId, upload, combined, baseUrl));
         }
-        byte[] combined = appendChunk(upload, upload.data().length, data);
-        validateResumableTotalSize(upload, (long) combined.length);
-        resumableUploads.remove(uploadId);
-        return putObject(upload.bucket(), upload.objectName(), upload.contentType(), combined,
+    }
+
+    public CompletedResumableUpload completedResumableUpload(String uploadId) {
+        return completedResumableUploads.get(uploadId);
+    }
+
+    // The completed session is recorded before the active one is dropped. Callers rely on
+    // that order: a miss on the active map means the completed entry is already visible.
+    private GcsObjectMeta finishResumableUpload(String uploadId, ResumableUpload upload, byte[] data, String baseUrl) {
+        GcsObjectMeta meta = putObject(upload.bucket(), upload.objectName(), upload.contentType(), data,
                 GcsCustomerEncryption.fromMetadata(upload.customerEncryption()), upload.metadata(),
                 upload.preconditions(), baseUrl);
-    }
-
-    public long appendResumableUpload(String uploadId, long start, byte[] data) {
-        return appendResumableUpload(uploadId, start, data, null);
-    }
-
-    public long appendResumableUpload(String uploadId, long start, byte[] data, Long totalSize) {
-        ResumableUpload upload = resumableUploads.get(uploadId);
-        if (upload == null) {
-            LOG.warnf("appendResumableUpload failed: upload not found uploadId=%s", uploadId);
-            throw GcpException.notFound("Resumable upload not found: " + uploadId);
-        }
-        validateResumableTotalSize(upload, totalSize);
-        byte[] combined = appendChunk(upload, start, data);
-        resumableUploads.put(uploadId, new ResumableUpload(
-                upload.bucket(), upload.objectName(), upload.contentType(), upload.customerEncryption(),
-                upload.metadata(), upload.preconditions(), combined,
-                upload.totalSize() != null ? upload.totalSize() : totalSize));
-        return combined.length - 1L;
-    }
-
-    public long resumableUploadLength(String uploadId) {
-        ResumableUpload upload = resumableUploads.get(uploadId);
-        if (upload == null) {
-            LOG.warnf("resumableUploadLength failed: upload not found uploadId=%s", uploadId);
-            throw GcpException.notFound("Resumable upload not found: " + uploadId);
-        }
-        return upload.data().length;
-    }
-
-    public GcsObjectMeta completeBufferedResumableUpload(String uploadId, long totalSize, String baseUrl) {
-        ResumableUpload upload = resumableUploads.get(uploadId);
-        if (upload == null) {
-            LOG.warnf("completeBufferedResumableUpload failed: upload not found uploadId=%s", uploadId);
-            throw GcpException.notFound("Resumable upload not found: " + uploadId);
-        }
-        validateResumableTotalSize(upload, totalSize);
-        byte[] data = upload.data();
-        if (data.length != totalSize) {
-            throw GcpException.invalidArgument(
-                    "Content-Range total size does not match uploaded bytes: " + totalSize);
-        }
+        completedResumableUploads.put(uploadId,
+                new CompletedResumableUpload(upload.bucket(), upload.objectName(), meta));
         resumableUploads.remove(uploadId);
-        return putObject(upload.bucket(), upload.objectName(), upload.contentType(), data,
-                GcsCustomerEncryption.fromMetadata(upload.customerEncryption()), upload.metadata(),
-                upload.preconditions(), baseUrl);
-    }
-
-    public GcsObjectMeta completeResumableUpload(String uploadId, long start, byte[] data,
-            long totalSize, String baseUrl) {
-        ResumableUpload upload = resumableUploads.get(uploadId);
-        if (upload == null) {
-            LOG.warnf("completeResumableUpload failed: upload not found uploadId=%s", uploadId);
-            throw GcpException.notFound("Resumable upload not found: " + uploadId);
-        }
-        validateResumableTotalSize(upload, totalSize);
-        byte[] combined = appendChunk(upload, start, data);
-        if (combined.length != totalSize) {
-            throw GcpException.invalidArgument(
-                    "Content-Range total size does not match uploaded bytes: " + totalSize);
-        }
-        resumableUploads.remove(uploadId);
-        return putObject(upload.bucket(), upload.objectName(), upload.contentType(), combined,
-                GcsCustomerEncryption.fromMetadata(upload.customerEncryption()), upload.metadata(),
-                upload.preconditions(), baseUrl);
+        LOG.debugf("finishResumableUpload uploadId=%s size=%d", uploadId, data.length);
+        return meta;
     }
 
     private static void validateResumableTotalSize(ResumableUpload upload, Long totalSize) {
@@ -949,6 +939,13 @@ public class GcsService {
 
     private static byte[] appendChunk(ResumableUpload upload, long start, byte[] data) {
         byte[] existing = upload.data();
+        if (start > existing.length) {
+            throw GcpException.unavailable("Invalid request. According to the Content-Range header, the upload offset is "
+                    + start + " byte(s), which exceeds already uploaded size of " + existing.length + " byte(s).");
+        }
+        if (start + data.length <= existing.length) {
+            return existing;
+        }
         if (start != existing.length) {
             throw GcpException.invalidArgument("Content-Range start does not match uploaded bytes: " + start);
         }
@@ -1187,6 +1184,10 @@ public class GcsService {
             locks[i] = new Object();
         }
         return locks;
+    }
+
+    private Object uploadLock(String uploadId) {
+        return uploadLocks[Math.floorMod(uploadId.hashCode(), uploadLocks.length)];
     }
 
     private Object objectLock(String bucket, String objectName) {
