@@ -36,6 +36,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -355,8 +356,8 @@ public class FirestoreService {
         if ("__name__".equals(path)) {
             return a.getName().compareTo(b.getName());
         }
-        StoredValue va = a.getFields() != null ? a.getFields().get(path) : null;
-        StoredValue vb = b.getFields() != null ? b.getFields().get(path) : null;
+        StoredValue va = resolveFieldPath(a, path);
+        StoredValue vb = resolveFieldPath(b, path);
         if (va == null && vb == null) {
             return 0;
         }
@@ -421,7 +422,7 @@ public class FirestoreService {
             String target = value.hasReferenceValue() ? value.getReferenceValue() : value.getStringValue();
             return doc.getName().compareTo(target);
         }
-        StoredValue stored = doc.getFields() != null ? doc.getFields().get(path) : null;
+        StoredValue stored = resolveFieldPath(doc, path);
         if (stored == null) {
             return -1;
         }
@@ -571,16 +572,19 @@ public class FirestoreService {
 
     private boolean matchesFieldFilter(StoredDocument doc, StructuredQuery.FieldFilter ff) {
         String path = ff.getField().getFieldPath();
-        StoredValue stored = doc.getFields() != null ? doc.getFields().get(path) : null;
+        StoredValue stored = resolveFieldPath(doc, path);
         Value filterValue = ff.getValue();
+        OptionalInt filterComparison = stored == null
+                ? OptionalInt.empty()
+                : compareFilterValues(stored, filterValue);
 
         return switch (ff.getOp()) {
             case EQUAL -> stored != null && stored.matchesEqual(filterValue);
             case NOT_EQUAL -> stored == null || !stored.matchesEqual(filterValue);
-            case LESS_THAN -> stored != null && compareValues(stored, filterValue) < 0;
-            case LESS_THAN_OR_EQUAL -> stored != null && compareValues(stored, filterValue) <= 0;
-            case GREATER_THAN -> stored != null && compareValues(stored, filterValue) > 0;
-            case GREATER_THAN_OR_EQUAL -> stored != null && compareValues(stored, filterValue) >= 0;
+            case LESS_THAN -> filterComparison.isPresent() && filterComparison.getAsInt() < 0;
+            case LESS_THAN_OR_EQUAL -> filterComparison.isPresent() && filterComparison.getAsInt() <= 0;
+            case GREATER_THAN -> filterComparison.isPresent() && filterComparison.getAsInt() > 0;
+            case GREATER_THAN_OR_EQUAL -> filterComparison.isPresent() && filterComparison.getAsInt() >= 0;
             case ARRAY_CONTAINS -> stored != null && "array".equals(stored.getType())
                     && stored.getArrayValue() != null
                     && stored.getArrayValue().stream().anyMatch(sv -> sv.matchesEqual(filterValue));
@@ -595,6 +599,48 @@ public class FirestoreService {
                     && filterValue.getArrayValue().getValuesList().stream()
                         .anyMatch(fv -> stored.getArrayValue().stream().anyMatch(sv -> sv.matchesEqual(fv)));
             default -> true;
+        };
+    }
+
+    /**
+     * Compares values for inequality filters. Unlike ordering and cursor comparison, an
+     * unsupported type pairing is explicitly incomparable and therefore cannot match an
+     * inclusive inequality merely because the ordering comparator returned zero.
+     */
+    private OptionalInt compareFilterValues(StoredValue stored, Value proto) {
+        return switch (proto.getValueTypeCase()) {
+            case INTEGER_VALUE -> {
+                if ("integer".equals(stored.getType()) && stored.getIntegerValue() != null)
+                    yield OptionalInt.of(Long.compare(stored.getIntegerValue(), proto.getIntegerValue()));
+                if ("double".equals(stored.getType()) && stored.getDoubleValue() != null)
+                    yield OptionalInt.of(Double.compare(stored.getDoubleValue(), (double) proto.getIntegerValue()));
+                yield OptionalInt.empty();
+            }
+            case DOUBLE_VALUE -> {
+                if ("double".equals(stored.getType()) && stored.getDoubleValue() != null)
+                    yield OptionalInt.of(Double.compare(stored.getDoubleValue(), proto.getDoubleValue()));
+                if ("integer".equals(stored.getType()) && stored.getIntegerValue() != null)
+                    yield OptionalInt.of(Double.compare((double) stored.getIntegerValue(), proto.getDoubleValue()));
+                yield OptionalInt.empty();
+            }
+            case STRING_VALUE -> {
+                if ("string".equals(stored.getType()) && stored.getStringValue() != null)
+                    yield OptionalInt.of(stored.getStringValue().compareTo(proto.getStringValue()));
+                yield OptionalInt.empty();
+            }
+            case TIMESTAMP_VALUE -> {
+                if ("timestamp".equals(stored.getType()) && stored.getStringValue() != null) {
+                    try {
+                        Instant a = Instant.parse(stored.getStringValue());
+                        Instant b = Instant.ofEpochSecond(
+                                proto.getTimestampValue().getSeconds(),
+                                proto.getTimestampValue().getNanos());
+                        yield OptionalInt.of(a.compareTo(b));
+                    } catch (Exception ignored) {}
+                }
+                yield OptionalInt.empty();
+            }
+            default -> OptionalInt.empty();
         };
     }
 
@@ -637,7 +683,7 @@ public class FirestoreService {
 
     private boolean matchesUnaryFilter(StoredDocument doc, StructuredQuery.UnaryFilter uf) {
         String path = uf.getField().getFieldPath();
-        StoredValue stored = doc.getFields() != null ? doc.getFields().get(path) : null;
+        StoredValue stored = resolveFieldPath(doc, path);
         return switch (uf.getOp()) {
             case IS_NULL -> stored != null && "null".equals(stored.getType());
             case IS_NOT_NULL -> stored != null && !"null".equals(stored.getType());
@@ -650,6 +696,22 @@ public class FirestoreService {
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────
+
+    private StoredValue resolveFieldPath(StoredDocument doc, String path) {
+        if (doc.getFields() == null) {
+            return null;
+        }
+
+        String[] segments = path.split("\\.", -1);
+        StoredValue value = doc.getFields().get(segments[0]);
+        for (int i = 1; i < segments.length; i++) {
+            if (value == null || !"map".equals(value.getType()) || value.getMapValue() == null) {
+                return null;
+            }
+            value = value.getMapValue().get(segments[i]);
+        }
+        return value;
+    }
 
     private Map<String, StoredValue> convertFields(Map<String, Value> protoFields) {
         Map<String, StoredValue> result = new LinkedHashMap<>();
