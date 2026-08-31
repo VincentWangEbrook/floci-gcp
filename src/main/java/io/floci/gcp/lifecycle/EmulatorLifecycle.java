@@ -5,6 +5,8 @@ import io.floci.gcp.core.common.ContainerTeardown;
 import io.floci.gcp.core.common.ServiceRegistry;
 import io.floci.gcp.core.storage.PersistentPathValidator;
 import io.floci.gcp.core.storage.StorageFactory;
+import io.floci.gcp.core.tls.TlsConfigSource;
+import io.floci.gcp.core.tls.TlsProxyServer;
 import io.floci.gcp.lifecycle.inithook.InitializationHook;
 import io.floci.gcp.lifecycle.inithook.InitializationHooksRunner;
 import io.quarkus.runtime.Quarkus;
@@ -22,6 +24,7 @@ import org.jboss.logging.Logger;
 
 import java.io.IOException;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 
 @ApplicationScoped
 public class EmulatorLifecycle {
@@ -38,13 +41,19 @@ public class EmulatorLifecycle {
     private final InitLifecycleState initLifecycleState;
     private final PersistentPathValidator persistentPathValidator;
     private final Instance<ContainerTeardown> containerTeardowns;
+    private final Instance<TlsProxyServer> tlsProxy;
+
+    /** How long startup waits for the TLS proxy's public port before proceeding with a warning. */
+    private static final long PUBLIC_PORT_WAIT_SECONDS = 30;
 
     @Inject
     public EmulatorLifecycle(StorageFactory storageFactory, ServiceRegistry serviceRegistry,
                              EmulatorConfig config, InitializationHooksRunner hooksRunner,
                              InitLifecycleState initLifecycleState,
                              PersistentPathValidator persistentPathValidator,
-                             Instance<ContainerTeardown> containerTeardowns) {
+                             Instance<ContainerTeardown> containerTeardowns,
+                             Instance<TlsProxyServer> tlsProxy) {
+        this.tlsProxy = tlsProxy;
         this.storageFactory = storageFactory;
         this.serviceRegistry = serviceRegistry;
         this.config = config;
@@ -84,7 +93,10 @@ public class EmulatorLifecycle {
     }
 
     void onHttpStart(@ObservesAsync HttpServerStart event) {
-        if (event.options().getPort() != config.port()) {
+        if (event.options().getPort() != primaryHttpPort()) {
+            return;
+        }
+        if (!awaitPublicPortIfProxied()) {
             return;
         }
         serviceRegistry.logEnabledServices();
@@ -110,6 +122,46 @@ public class EmulatorLifecycle {
             LOG.error("Startup hook failed — shutting down", e);
             Quarkus.asyncExit();
         }
+    }
+
+    /**
+     * The port Quarkus actually binds for the plaintext listener.
+     *
+     * <p>With TLS enabled the public {@link EmulatorConfig#port()} belongs to the TLS proxy and
+     * Quarkus moves to internal loopback ports, so matching the public port here would never fire
+     * and the START/READY hooks would silently never run. Matching the internal HTTP port keeps
+     * exactly one listener triggering the hooks, as before.
+     */
+    int primaryHttpPort() {
+        return config.tls().enabled() ? TlsConfigSource.HTTP_INTERNAL_PORT : config.port();
+    }
+
+    /**
+     * With TLS on, the public port belongs to the TLS proxy and is bound asynchronously, so this
+     * observer can fire before it is accepting. Waiting here keeps the guarantee the plaintext
+     * path already had: by the time the hooks run and readiness is published, the endpoint clients
+     * are told to use is actually reachable.
+     */
+    boolean awaitPublicPortIfProxied() {
+        if (!config.tls().enabled() || tlsProxy == null || tlsProxy.isUnsatisfied()) {
+            return true;
+        }
+        if (tlsProxy.get().awaitPublicPortReady(PUBLIC_PORT_WAIT_SECONDS, TimeUnit.SECONDS)) {
+            return true;
+        }
+        // The bind failed or never completed, so the emulator is unreachable on its public port.
+        // Running the hooks now would point them at a dead endpoint and publishing readiness would
+        // tell clients to connect to something that cannot answer.
+        LOG.errorf("TLS proxy did not report port %d ready within %ds; aborting startup instead of "
+                        + "running hooks against an unreachable endpoint",
+                config.port(), PUBLIC_PORT_WAIT_SECONDS);
+        abortStartup();
+        return false;
+    }
+
+    /** Visible for testing — overridden so tests can observe the abort without exiting the JVM. */
+    void abortStartup() {
+        Quarkus.asyncExit();
     }
 
     void onPreShutdown(@Observes ShutdownDelayInitiatedEvent ignored) {
