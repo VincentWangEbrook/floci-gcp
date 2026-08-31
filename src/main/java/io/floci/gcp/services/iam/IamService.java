@@ -216,6 +216,16 @@ public class IamService {
         synchronized (policyLock(key)) {
             deleteResource.run();
             policyStore.delete(key);
+            policyStore.flush();
+        }
+    }
+
+    public void deleteResourceAndPolicyDurably(String resource, Runnable deleteResource) {
+        String key = policyKey(resource);
+        synchronized (policyLock(key)) {
+            deleteResource.run();
+            policyStore.delete(key);
+            policyStore.checkpoint();
         }
     }
 
