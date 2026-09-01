@@ -19,11 +19,6 @@ import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
 import java.time.Instant;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -32,7 +27,6 @@ import java.util.UUID;
 public class CloudTasksService {
 
     private static final Logger LOG = Logger.getLogger(CloudTasksService.class);
-    private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
 
     private final StorageBackend<String, StoredQueue> queueStore;
     private final StorageBackend<String, StoredTask> taskStore;
@@ -233,35 +227,7 @@ public class CloudTasksService {
             throw GcpException.unavailable(injectedFailure);
         }
         task.setDispatchCount(task.getDispatchCount() + 1);
-        if (dispatchHttpTask(task)) {
-            taskStore.delete(name);
-        } else {
-            task.setResponseCount(task.getResponseCount() + 1);
-            taskStore.put(name, task);
-        }
+        taskStore.put(name, task);
         return task;
-    }
-
-    private boolean dispatchHttpTask(StoredTask task) {
-        if (!"HTTP".equals(task.getTaskType()) || task.getUrl() == null || task.getUrl().isBlank()) return false;
-        try {
-            HttpRequest.Builder request = HttpRequest.newBuilder().uri(URI.create(task.getUrl()))
-                    .timeout(Duration.ofSeconds(30));
-            if (task.getHeaders() != null) task.getHeaders().forEach(request::header);
-            String queueName = task.getName().substring(0, task.getName().lastIndexOf("/tasks/"));
-            request.header("X-CloudTasks-TaskName", task.getName());
-            request.header("X-CloudTasks-QueueName", queueName);
-            request.header("X-CloudTasks-TaskRetryCount", Integer.toString(task.getResponseCount()));
-            request.header("X-CloudTasks-TaskExecutionCount", Integer.toString(task.getDispatchCount()));
-            request.header("X-CloudTasks-TaskETA", task.getScheduleTime());
-            byte[] body = task.getBody() == null ? new byte[0] : task.getBody();
-            String method = task.getHttpMethod() == null || task.getHttpMethod().isBlank() ? "POST" : task.getHttpMethod();
-            HttpResponse<Void> response = HTTP_CLIENT.send(request.method(method, HttpRequest.BodyPublishers.ofByteArray(body)).build(),
-                    HttpResponse.BodyHandlers.discarding());
-            return response.statusCode() >= 200 && response.statusCode() < 300;
-        } catch (Exception e) {
-            LOG.warnf("Task %s dispatch failed: %s", task.getName(), e.getMessage());
-            return false;
-        }
     }
 }
