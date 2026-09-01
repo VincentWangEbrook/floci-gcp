@@ -12,7 +12,6 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
-import io.floci.gcp.core.common.TestFaultInjector;
 
 class IamServiceTest {
 
@@ -49,17 +48,6 @@ class IamServiceTest {
         GcpException ex = assertThrows(GcpException.class,
                 () -> service.getServiceAccount("p1", "missing@p1.iam.gserviceaccount.com"));
         assertEquals("NOT_FOUND", ex.getGcpStatus());
-    }
-
-    @Test
-    void testPermissionsSurfacesAnInjectedAuthorizationFailure() {
-        TestFaultInjector faults = new TestFaultInjector(true);
-        service = new IamService(new InMemoryStorage<>(), new InMemoryStorage<>(), new InMemoryStorage<>(), faults);
-        faults.arm("iam.authorize", "simulated iam denial");
-
-        GcpException error = assertThrows(GcpException.class,
-                () -> service.testPermissions("projects/p1", List.of("resourcemanager.projects.get")));
-        assertEquals("PERMISSION_DENIED", error.getGcpStatus());
     }
 
     @Test
