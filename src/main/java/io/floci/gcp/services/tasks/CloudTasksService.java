@@ -242,6 +242,20 @@ public class CloudTasksService {
         return task;
     }
 
+    /** Dispatches due tasks for running queues; invoked by the background dispatcher and tests. */
+    public void dispatchDue(Instant now) {
+        for (StoredTask task : taskStore.scan(key -> true)) {
+            try {
+                if (task.getScheduleTime() == null || Instant.parse(task.getScheduleTime()).isAfter(now)) continue;
+                String queueName = task.getName().substring(0, task.getName().lastIndexOf("/tasks/"));
+                if (!"RUNNING".equals(getQueue(queueName).getState())) continue;
+                runTask(task.getName());
+            } catch (Exception e) {
+                LOG.warnf("Due task %s was not dispatched: %s", task.getName(), e.getMessage());
+            }
+        }
+    }
+
     private boolean dispatchHttpTask(StoredTask task) {
         if (!"HTTP".equals(task.getTaskType()) || task.getUrl() == null || task.getUrl().isBlank()) return false;
         try {
