@@ -6,6 +6,9 @@ import com.github.dockerjava.api.command.CreateContainerResponse;
 import com.github.dockerjava.api.command.CreateVolumeCmd;
 import com.github.dockerjava.api.command.InspectVolumeCmd;
 import com.github.dockerjava.api.exception.NotFoundException;
+import com.github.dockerjava.api.model.ExposedPort;
+import com.github.dockerjava.api.model.HostConfig;
+import com.github.dockerjava.api.model.Ports;
 import io.floci.gcp.config.EmulatorConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -98,6 +101,24 @@ class ContainerLifecycleManagerLabelsTest {
         assertEquals(
                 Map.of("floci", "true", "floci_emulator", "floci-gcp", "floci_namespace", "run-one"),
                 capturedLabels(createCmd));
+    }
+
+    @Test
+    void createBindsPublishedChildPortsToLoopbackOnly() {
+        CreateContainerCmd createCmd = stubCreateContainer();
+        ContainerSpec spec = new ContainerSpec(
+                "busybox:stable", null, List.of(), null, null, null, Map.of(8080, 18080), List.of(8080), null,
+                List.of(), List.of(), List.of(), Map.of(), null, false,
+                null, List.of(), null, null, List.of());
+
+        manager().create(spec);
+
+        ArgumentCaptor<HostConfig> hostConfig = ArgumentCaptor.forClass(HostConfig.class);
+        verify(createCmd).withHostConfig(hostConfig.capture());
+        Ports.Binding binding = hostConfig.getValue().getPortBindings()
+                .getBindings().get(ExposedPort.tcp(8080))[0];
+        assertEquals("127.0.0.1", binding.getHostIp());
+        assertEquals("18080", binding.getHostPortSpec());
     }
 
     @Test

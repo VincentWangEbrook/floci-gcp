@@ -282,6 +282,9 @@ unversioned directory without rewriting it. A future incompatible schema stops s
 changing data and names the state directory to reset in the error message; remove that directory
 only after intentionally discarding its local state.
 
+Emulator-created child containers that need a host port are always published on `127.0.0.1`.
+They remain reachable by the local emulator and test harness without opening a LAN/public listener.
+
 | Mode | Behavior | Best for | Durability |
 |:---:|---|---|:---:|
 | **`memory`** | **(Default)** Entirely in-RAM. Lost on container stop. | Speed, CI pipelines | ❌ None |

@@ -437,7 +437,7 @@ public class ContainerLifecycleManager {
                 if (hostPort == 0) {
                     hostPort = portAllocator.allocateAny();
                 }
-                ports.bind(ExposedPort.tcp(containerPort), Ports.Binding.bindPort(hostPort));
+                ports.bind(ExposedPort.tcp(containerPort), Ports.Binding.bindIpAndPort("127.0.0.1", hostPort));
             }
             hostConfig.withPortBindings(ports);
         }
