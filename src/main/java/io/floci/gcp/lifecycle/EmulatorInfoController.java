@@ -114,9 +114,6 @@ public class EmulatorInfoController {
     @POST
     @Path("/state/reset")
     public Response reset() {
-        if (!config.testControl().enabled()) {
-            return Response.status(Response.Status.NOT_FOUND).build();
-        }
         performReset();
         return Response.ok(Map.of("status", "OK")).build();
     }

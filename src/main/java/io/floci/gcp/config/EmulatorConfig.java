@@ -46,17 +46,6 @@ public interface EmulatorConfig {
 
     InitHooksConfig initHooks();
 
-    TestControlConfig testControl();
-
-    /**
-     * Destructive controls reserved for isolated conformance tests. This is deliberately false
-     * by default so normal local development containers cannot reset emulator state over HTTP.
-     */
-    interface TestControlConfig {
-        @WithDefault("false")
-        boolean enabled();
-    }
-
     interface TlsConfig {
         /** Enable TLS/HTTPS. When true, both HTTP and HTTPS are served on the same public port. */
         @WithDefault("false")

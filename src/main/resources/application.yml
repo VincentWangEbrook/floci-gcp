@@ -51,8 +51,6 @@ floci-gcp:
     # cert-path: ""    # FLOCI_GCP_TLS_CERT_PATH (PEM certificate file)
     # key-path: ""     # FLOCI_GCP_TLS_KEY_PATH (PEM private key file)
   default-project-id: floci-local
-  test-control:
-    enabled: false
   storage:
     mode: memory
     persistent-path: ./data

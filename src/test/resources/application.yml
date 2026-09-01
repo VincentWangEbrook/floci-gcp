@@ -10,8 +10,6 @@ quarkus:
 
 floci-gcp:
   port: 4588
-  test-control:
-    enabled: true
   default-project-id: test-project
   storage:
     mode: memory

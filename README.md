@@ -524,7 +524,7 @@ gcloud secrets versions access latest --secret=my-secret
 
 Use `GenericContainer` to start an isolated floci-gcp instance directly from your tests. This avoids shared state, manual daemon setup, and port conflicts.
 
-The emulator also ships helper endpoints for test harnesses: `GET /health` (readiness, also at `/_floci-gcp/health`) and `GET /_floci-gcp/info` (build and service info). The destructive `POST /_floci-gcp/state/reset` and `/state/nuke` controls return `404` unless `FLOCI_GCP_TEST_CONTROL_ENABLED=true`; enable them only in an isolated test profile.
+The emulator also ships helper endpoints for test harnesses: `GET /health` (readiness, also at `/_floci-gcp/health`), `GET /_floci-gcp/info` (build and service info), and `POST /_floci-gcp/state/reset` (wipe all emulator state between tests without a restart).
 
 <details>
 <summary><strong>Java</strong></summary>
