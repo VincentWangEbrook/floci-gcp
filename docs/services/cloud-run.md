@@ -12,6 +12,7 @@ floci-gcp emulates the Cloud Run Admin API v2 control plane over REST JSON using
 | `FLOCI_GCP_SERVICES_CLOUDRUN_EXECUTION_OPERATION_TIMEOUT` | `300s` | Maximum time for asynchronous Cloud Run execution operations before their LRO fails |
 | `FLOCI_GCP_SERVICES_CLOUDRUN_EXECUTION_CLEANUP_TIMEOUT` | `15s` | Maximum time to wait for best-effort Docker cleanup after an operation is already resolved |
 | `FLOCI_GCP_SERVICES_CLOUDRUN_EXECUTION_URL_HOST_SUFFIX` | `localhost.floci.io` or `FLOCI_GCP_HOSTNAME` | Host suffix used for generated Cloud Run execution URLs |
+| `FLOCI_GCP_SERVICES_CLOUDRUN_EXECUTION_IMAGE_MAP` | `disabled` | Comma-separated exact `requested-image=preloaded-local-image` mappings required for Docker-backed Cloud Run execution |
 
 ## Supported API Surface
 
@@ -35,6 +36,14 @@ When execution is disabled, create, update, and delete return completed `google.
 In mock mode (`FLOCI_GCP_SERVICES_CLOUDRUN_MOCK=true`) Cloud Run services are metadata only. Creating a service synthesizes the service URL, timestamps, etag, ready condition, traffic status, latest revision fields, and one read-only revision. No container image is pulled and no request-serving runtime is started.
 
 Image-based service execution runs by default (`FLOCI_GCP_SERVICES_CLOUDRUN_MOCK=false`); set `mock=true` to keep services metadata-only — no Docker containers and no execution-mode template validation. In execution mode, image-based service creation starts one Docker container for the created revision, injects `PORT`, `K_SERVICE`, `K_REVISION`, and `K_CONFIGURATION`, waits for the ingress TCP port, and returns a deterministic app-root invocation URL on the floci-gcp front door:
+
+For local execution, configure an exact image map before creating a service, for example:
+
+```bash
+FLOCI_GCP_SERVICES_CLOUDRUN_EXECUTION_IMAGE_MAP='us-docker.pkg.dev/shophub-local/app/worker:2026-09-01=shophub-worker:local'
+```
+
+The mapped Docker image must already exist locally. floci-gcp refuses an unmapped image or a missing mapped image and never pulls either image from a registry.
 
 ```text
 http://{service}-{project-token}.{location}.run.localhost.floci.io:4588

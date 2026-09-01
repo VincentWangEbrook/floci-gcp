@@ -29,6 +29,7 @@ public class ImageCacheService {
     private final DockerClientProducer dockerClients;
     private final List<EmulatorConfig.DockerConfig.RegistryCredential> registryCredentials;
     private final Set<String> pulledImages = ConcurrentHashMap.newKeySet();
+    private final Set<String> pullForbiddenImages = ConcurrentHashMap.newKeySet();
     private final ConcurrentHashMap<String, Object> locks = new ConcurrentHashMap<>();
 
     @Inject
@@ -51,6 +52,9 @@ public class ImageCacheService {
                 LOG.infov("Image already present locally, skipping pull: {0}", image);
                 return;
             }
+            if (pullForbiddenImages.contains(image)) {
+                throw new IllegalStateException("Docker image is not available locally and registry pulls are disabled: " + image);
+            }
             LOG.infov("Pulling image: {0}", image);
             try {
                 runWithRetry(image, MAX_PULL_ATTEMPTS, INITIAL_BACKOFF_MS,
@@ -65,6 +69,15 @@ public class ImageCacheService {
                 throw new RuntimeException("Interrupted while pulling image: " + image, e);
             }
         }
+    }
+
+    /** Requires a preloaded local image and permanently disables registry pulls for that exact reference. */
+    public void requireLocalImage(String image) {
+        pullForbiddenImages.add(image);
+        if (!isLocalImagePresent(image)) {
+            throw new IllegalStateException("Required local Docker image is not present: " + image);
+        }
+        pulledImages.add(image);
     }
 
     /**
