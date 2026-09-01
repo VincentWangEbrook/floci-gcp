@@ -3,7 +3,6 @@ package io.floci.gcp.services.tasks;
 import com.fasterxml.jackson.core.type.TypeReference;
 import io.floci.gcp.config.EmulatorConfig;
 import io.floci.gcp.core.common.GcpException;
-import io.floci.gcp.core.common.EmulatorClock;
 import io.floci.gcp.core.common.TestFaultInjector;
 import io.floci.gcp.core.common.ServiceDescriptor;
 import io.floci.gcp.core.common.ServiceProtocol;
@@ -28,7 +27,6 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.Locale;
 
 @ApplicationScoped
 public class CloudTasksService {
@@ -39,7 +37,6 @@ public class CloudTasksService {
     private final StorageBackend<String, StoredQueue> queueStore;
     private final StorageBackend<String, StoredTask> taskStore;
     private final TestFaultInjector faults;
-    private final EmulatorClock clock;
 
     private final ServiceRegistry serviceRegistry;
     private final EmulatorConfig config;
@@ -47,13 +44,11 @@ public class CloudTasksService {
 
     @Inject
     public CloudTasksService(ServiceRegistry serviceRegistry, EmulatorConfig config,
-            StorageFactory storageFactory, GrpcServerManager grpcServerManager, TestFaultInjector faults,
-            EmulatorClock clock) {
+            StorageFactory storageFactory, GrpcServerManager grpcServerManager, TestFaultInjector faults) {
         this.serviceRegistry = serviceRegistry;
         this.config = config;
         this.grpcServerManager = grpcServerManager;
         this.faults = faults;
-        this.clock = clock;
         this.queueStore = storageFactory.createGlobal("cloudtasks-queues", "cloudtasks-queues.json",
                 new TypeReference<Map<String, StoredQueue>>() {});
         this.taskStore = storageFactory.createGlobal("cloudtasks-tasks", "cloudtasks-tasks.json",
@@ -67,15 +62,9 @@ public class CloudTasksService {
 
     CloudTasksService(StorageBackend<String, StoredQueue> queueStore,
             StorageBackend<String, StoredTask> taskStore, TestFaultInjector faults) {
-        this(queueStore, taskStore, faults, new EmulatorClock(false, null));
-    }
-
-    CloudTasksService(StorageBackend<String, StoredQueue> queueStore,
-            StorageBackend<String, StoredTask> taskStore, TestFaultInjector faults, EmulatorClock clock) {
         this.queueStore = queueStore;
         this.taskStore = taskStore;
         this.faults = faults;
-        this.clock = clock;
         this.serviceRegistry = null;
         this.config = null;
         this.grpcServerManager = null;
@@ -95,19 +84,12 @@ public class CloudTasksService {
 
     public StoredQueue createQueue(String project, String location, String queueId,
             double maxDispatchesPerSecond, int maxConcurrentDispatches, int maxAttempts) {
-        return createQueue(project, location, queueId, maxDispatchesPerSecond, maxConcurrentDispatches,
-                maxAttempts, 1, 3600, 16);
-    }
-
-    public StoredQueue createQueue(String project, String location, String queueId,
-            double maxDispatchesPerSecond, int maxConcurrentDispatches, int maxAttempts,
-            long minBackoffSeconds, long maxBackoffSeconds, int maxDoublings) {
         String name = "projects/" + project + "/locations/" + location + "/queues/" + queueId;
         LOG.infof("createQueue name=%s", name);
         if (queueStore.get(name).isPresent()) {
             throw GcpException.alreadyExists("Queue already exists: " + name);
         }
-        StoredQueue queue = new StoredQueue(name, clock.instant().toString());
+        StoredQueue queue = new StoredQueue(name, Instant.now().toString());
         if (maxDispatchesPerSecond > 0) {
             queue.setMaxDispatchesPerSecond(maxDispatchesPerSecond);
         }
@@ -117,7 +99,6 @@ public class CloudTasksService {
         if (maxAttempts > 0) {
             queue.setMaxAttempts(maxAttempts);
         }
-        setRetryConfiguration(queue, minBackoffSeconds, maxBackoffSeconds, maxDoublings);
         queueStore.put(name, queue);
         return queue;
     }
@@ -136,12 +117,6 @@ public class CloudTasksService {
 
     public StoredQueue updateQueue(String name, double maxDispatchesPerSecond,
             int maxConcurrentDispatches, int maxAttempts) {
-        return updateQueue(name, maxDispatchesPerSecond, maxConcurrentDispatches, maxAttempts, 1, 3600, 16);
-    }
-
-    public StoredQueue updateQueue(String name, double maxDispatchesPerSecond,
-            int maxConcurrentDispatches, int maxAttempts, long minBackoffSeconds,
-            long maxBackoffSeconds, int maxDoublings) {
         LOG.infof("updateQueue name=%s", name);
         StoredQueue queue = queueStore.get(name)
                 .orElseThrow(() -> GcpException.notFound("Queue not found: " + name));
@@ -154,7 +129,6 @@ public class CloudTasksService {
         if (maxAttempts > 0) {
             queue.setMaxAttempts(maxAttempts);
         }
-        setRetryConfiguration(queue, minBackoffSeconds, maxBackoffSeconds, maxDoublings);
         queueStore.put(name, queue);
         return queue;
     }
@@ -175,7 +149,7 @@ public class CloudTasksService {
                 .orElseThrow(() -> GcpException.notFound("Queue not found: " + name));
         String taskPrefix = name + "/tasks/";
         taskStore.scan(k -> k.startsWith(taskPrefix)).forEach(t -> taskStore.delete(t.getName()));
-        queue.setPurgeTime(clock.instant().toString());
+        queue.setPurgeTime(Instant.now().toString());
         queueStore.put(name, queue);
         return queue;
     }
@@ -203,13 +177,6 @@ public class CloudTasksService {
     public StoredTask createTask(String queueName, String taskId, String taskType,
             String httpMethod, String url, Map<String, String> headers, byte[] body,
             String appEngineHttpMethod, String relativeUri, String scheduleTime) {
-        return createTask(queueName, taskId, taskType, httpMethod, url, headers, body,
-                appEngineHttpMethod, relativeUri, scheduleTime, 600);
-    }
-
-    public StoredTask createTask(String queueName, String taskId, String taskType,
-            String httpMethod, String url, Map<String, String> headers, byte[] body,
-            String appEngineHttpMethod, String relativeUri, String scheduleTime, long dispatchDeadlineSeconds) {
         if (queueStore.get(queueName).isEmpty()) {
             throw GcpException.notFound("Queue not found: " + queueName);
         }
@@ -221,9 +188,8 @@ public class CloudTasksService {
         }
         StoredTask task = new StoredTask();
         task.setName(name);
-        task.setCreateTime(clock.instant().toString());
-        task.setScheduleTime(scheduleTime != null ? scheduleTime : clock.instant().toString());
-        task.setDispatchDeadlineSeconds(validateDispatchDeadline(dispatchDeadlineSeconds));
+        task.setCreateTime(Instant.now().toString());
+        task.setScheduleTime(scheduleTime != null ? scheduleTime : Instant.now().toString());
         task.setTaskType(taskType);
         task.setHttpMethod(httpMethod);
         task.setUrl(url);
@@ -271,13 +237,7 @@ public class CloudTasksService {
             taskStore.delete(name);
         } else {
             task.setResponseCount(task.getResponseCount() + 1);
-            StoredQueue queue = getQueue(queueName(task));
-            if (task.getDispatchCount() >= queue.getMaxAttempts()) {
-                taskStore.delete(name);
-            } else {
-                task.setScheduleTime(clock.instant().plusSeconds(retryBackoffSeconds(queue, task.getResponseCount())).toString());
-                taskStore.put(name, task);
-            }
+            taskStore.put(name, task);
         }
         return task;
     }
@@ -287,7 +247,7 @@ public class CloudTasksService {
         for (StoredTask task : taskStore.scan(key -> true)) {
             try {
                 if (task.getScheduleTime() == null || Instant.parse(task.getScheduleTime()).isAfter(now)) continue;
-                String queueName = queueName(task);
+                String queueName = task.getName().substring(0, task.getName().lastIndexOf("/tasks/"));
                 if (!"RUNNING".equals(getQueue(queueName).getState())) continue;
                 runTask(task.getName());
             } catch (Exception e) {
@@ -300,11 +260,9 @@ public class CloudTasksService {
         if (!"HTTP".equals(task.getTaskType()) || task.getUrl() == null || task.getUrl().isBlank()) return false;
         try {
             HttpRequest.Builder request = HttpRequest.newBuilder().uri(URI.create(task.getUrl()))
-                    .timeout(Duration.ofSeconds(task.getDispatchDeadlineSeconds()));
-            if (task.getHeaders() != null) task.getHeaders().forEach((name, value) -> {
-                if (!isCloudTasksHeader(name)) request.header(name, value);
-            });
-            String queueName = queueName(task);
+                    .timeout(Duration.ofSeconds(30));
+            if (task.getHeaders() != null) task.getHeaders().forEach(request::header);
+            String queueName = task.getName().substring(0, task.getName().lastIndexOf("/tasks/"));
             request.header("X-CloudTasks-TaskName", task.getName());
             request.header("X-CloudTasks-QueueName", queueName);
             request.header("X-CloudTasks-TaskRetryCount", Integer.toString(task.getResponseCount()));
@@ -319,33 +277,5 @@ public class CloudTasksService {
             LOG.warnf("Task %s dispatch failed: %s", task.getName(), e.getMessage());
             return false;
         }
-    }
-
-    private static String queueName(StoredTask task) {
-        return task.getName().substring(0, task.getName().lastIndexOf("/tasks/"));
-    }
-
-    private static boolean isCloudTasksHeader(String name) {
-        return name.toUpperCase(Locale.ROOT).startsWith("X-CLOUDTASKS-");
-    }
-
-    private static long retryBackoffSeconds(StoredQueue queue, int responseCount) {
-        int exponent = Math.min(Math.max(responseCount - 1, 0), Math.min(queue.getMaxDoublings(), 30));
-        long multiplied = queue.getMinBackoffSeconds() * (1L << exponent);
-        return Math.min(multiplied, queue.getMaxBackoffSeconds());
-    }
-
-    private static long validateDispatchDeadline(long seconds) {
-        if (seconds < 15 || seconds > 1800) {
-            throw GcpException.invalidArgument("Dispatch deadline must be between 15 seconds and 30 minutes");
-        }
-        return seconds;
-    }
-
-    private static void setRetryConfiguration(StoredQueue queue, long minBackoffSeconds,
-            long maxBackoffSeconds, int maxDoublings) {
-        if (minBackoffSeconds > 0) queue.setMinBackoffSeconds(minBackoffSeconds);
-        if (maxBackoffSeconds > 0) queue.setMaxBackoffSeconds(maxBackoffSeconds);
-        if (maxDoublings >= 0) queue.setMaxDoublings(maxDoublings);
     }
 }

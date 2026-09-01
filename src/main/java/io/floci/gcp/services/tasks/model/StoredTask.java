@@ -13,7 +13,6 @@ public class StoredTask {
     private String scheduleTime;
     private int dispatchCount;
     private int responseCount;
-    private long dispatchDeadlineSeconds = 600;
 
     // "HTTP" or "APP_ENGINE"
     private String taskType;
@@ -45,9 +44,6 @@ public class StoredTask {
 
     public int getResponseCount() { return responseCount; }
     public void setResponseCount(int n) { this.responseCount = n; }
-
-    public long getDispatchDeadlineSeconds() { return dispatchDeadlineSeconds; }
-    public void setDispatchDeadlineSeconds(long seconds) { this.dispatchDeadlineSeconds = seconds; }
 
     public String getTaskType() { return taskType; }
     public void setTaskType(String t) { this.taskType = t; }

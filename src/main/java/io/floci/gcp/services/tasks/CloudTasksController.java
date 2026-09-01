@@ -78,10 +78,7 @@ public class CloudTasksController extends CloudTasksGrpc.CloudTasksImplBase {
             StoredQueue stored = service.createQueue(parts[0], parts[1], queueId,
                     rl.getMaxDispatchesPerSecond(),
                     rl.getMaxConcurrentDispatches(),
-                    rc.getMaxAttempts(),
-                    durationSeconds(rc.getMinBackoff()),
-                    durationSeconds(rc.getMaxBackoff()),
-                    rc.getMaxDoublings());
+                    rc.getMaxAttempts());
             responseObserver.onNext(toQueueProto(stored));
             responseObserver.onCompleted();
         } catch (Exception e) {
@@ -100,10 +97,7 @@ public class CloudTasksController extends CloudTasksGrpc.CloudTasksImplBase {
             StoredQueue stored = service.updateQueue(q.getName(),
                     rl.getMaxDispatchesPerSecond(),
                     rl.getMaxConcurrentDispatches(),
-                    rc.getMaxAttempts(),
-                    durationSeconds(rc.getMinBackoff()),
-                    durationSeconds(rc.getMaxBackoff()),
-                    rc.getMaxDoublings());
+                    rc.getMaxAttempts());
             responseObserver.onNext(toQueueProto(stored));
             responseObserver.onCompleted();
         } catch (Exception e) {
@@ -216,7 +210,6 @@ public class CloudTasksController extends CloudTasksGrpc.CloudTasksImplBase {
             String appEngineHttpMethod = null;
             String relativeUri = null;
             String scheduleTime = null;
-            long dispatchDeadlineSeconds = 600;
 
             if (t.hasHttpRequest()) {
                 taskType = "HTTP";
@@ -240,13 +233,9 @@ public class CloudTasksController extends CloudTasksGrpc.CloudTasksImplBase {
                 scheduleTime = Instant.ofEpochSecond(
                         t.getScheduleTime().getSeconds(), t.getScheduleTime().getNanos()).toString();
             }
-            if (t.hasDispatchDeadline()) {
-                dispatchDeadlineSeconds = durationSeconds(t.getDispatchDeadline());
-            }
 
             StoredTask stored = service.createTask(request.getParent(), taskId, taskType,
-                    httpMethod, url, headers, body, appEngineHttpMethod, relativeUri, scheduleTime,
-                    dispatchDeadlineSeconds);
+                    httpMethod, url, headers, body, appEngineHttpMethod, relativeUri, scheduleTime);
             responseObserver.onNext(toTaskProto(stored));
             responseObserver.onCompleted();
         } catch (Exception e) {
@@ -326,11 +315,6 @@ public class CloudTasksController extends CloudTasksGrpc.CloudTasksImplBase {
                         .build())
                 .setRetryConfig(RetryConfig.newBuilder()
                         .setMaxAttempts(stored.getMaxAttempts())
-                        .setMinBackoff(com.google.protobuf.Duration.newBuilder()
-                                .setSeconds(stored.getMinBackoffSeconds()))
-                        .setMaxBackoff(com.google.protobuf.Duration.newBuilder()
-                                .setSeconds(stored.getMaxBackoffSeconds()))
-                        .setMaxDoublings(stored.getMaxDoublings())
                         .build());
         if (stored.getPurgeTime() != null) {
             builder.setPurgeTime(toTimestamp(stored.getPurgeTime()));
@@ -344,9 +328,7 @@ public class CloudTasksController extends CloudTasksGrpc.CloudTasksImplBase {
                 .setCreateTime(toTimestamp(stored.getCreateTime()))
                 .setScheduleTime(toTimestamp(stored.getScheduleTime()))
                 .setDispatchCount(stored.getDispatchCount())
-                .setResponseCount(stored.getResponseCount())
-                .setDispatchDeadline(com.google.protobuf.Duration.newBuilder()
-                        .setSeconds(stored.getDispatchDeadlineSeconds()));
+                .setResponseCount(stored.getResponseCount());
 
         if ("APP_ENGINE".equals(stored.getTaskType())) {
             AppEngineHttpRequest.Builder ae = AppEngineHttpRequest.newBuilder();
@@ -402,10 +384,6 @@ public class CloudTasksController extends CloudTasksGrpc.CloudTasksImplBase {
         } catch (Exception e) {
             return Timestamp.getDefaultInstance();
         }
-    }
-
-    private static long durationSeconds(com.google.protobuf.Duration duration) {
-        return duration == null ? 0 : duration.getSeconds();
     }
 
     private static String[] parseParent(String parent) {

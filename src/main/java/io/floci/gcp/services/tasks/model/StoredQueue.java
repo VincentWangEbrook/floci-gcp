@@ -14,9 +14,6 @@ public class StoredQueue {
     private int maxConcurrentDispatches;
     private int maxBurstSize;
     private int maxAttempts;
-    private long minBackoffSeconds;
-    private long maxBackoffSeconds;
-    private int maxDoublings;
 
     public StoredQueue() {
     }
@@ -29,9 +26,6 @@ public class StoredQueue {
         this.maxConcurrentDispatches = 1000;
         this.maxBurstSize = 500;
         this.maxAttempts = 100;
-        this.minBackoffSeconds = 1;
-        this.maxBackoffSeconds = 3600;
-        this.maxDoublings = 16;
     }
 
     public String getName() { return name; }
@@ -57,13 +51,4 @@ public class StoredQueue {
 
     public int getMaxAttempts() { return maxAttempts; }
     public void setMaxAttempts(int v) { this.maxAttempts = v; }
-
-    public long getMinBackoffSeconds() { return minBackoffSeconds; }
-    public void setMinBackoffSeconds(long v) { this.minBackoffSeconds = v; }
-
-    public long getMaxBackoffSeconds() { return maxBackoffSeconds; }
-    public void setMaxBackoffSeconds(long v) { this.maxBackoffSeconds = v; }
-
-    public int getMaxDoublings() { return maxDoublings; }
-    public void setMaxDoublings(int v) { this.maxDoublings = v; }
 }
