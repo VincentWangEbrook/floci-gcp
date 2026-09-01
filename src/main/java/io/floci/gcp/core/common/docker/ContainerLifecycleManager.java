@@ -89,11 +89,6 @@ public class ContainerLifecycleManager {
         }
     }
 
-    /** Fails before container creation unless an image is already local; registry pulls remain forbidden afterwards. */
-    public void requireLocalImage(String image) {
-        imageCacheService.requireLocalImage(image);
-    }
-
     public String create(ContainerSpec spec) {
         LOG.debugv("Creating container: image={0}, name={1}", spec.image(), spec.name());
 

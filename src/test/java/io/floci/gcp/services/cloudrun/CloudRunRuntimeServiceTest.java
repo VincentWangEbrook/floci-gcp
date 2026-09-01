@@ -51,8 +51,6 @@ class CloudRunRuntimeServiceTest {
         when(config.services().cloudrun().execution().defaultPort()).thenReturn(8080);
         when(config.services().cloudrun().execution().startupTimeout()).thenReturn(Duration.ofSeconds(1));
         when(config.services().cloudrun().execution().requestTimeout()).thenReturn(Duration.ofSeconds(300));
-        when(config.services().cloudrun().execution().imageMap())
-                .thenReturn("gcr.io/p1/svc:latest=floci-test-svc:local");
         when(config.effectiveBaseUrl()).thenReturn("http://localhost:4588");
         when(config.docker().logMaxSize()).thenReturn("10m");
         when(config.docker().logMaxFile()).thenReturn("3");

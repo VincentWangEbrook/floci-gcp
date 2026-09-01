@@ -104,10 +104,7 @@ public class CloudRunRuntimeService {
             throw GcpException.unimplemented("Cloud Run execution mock mode does not start runtime containers");
         }
 
-        com.google.cloud.run.v2.Container requestedContainer = revision.getContainers(0);
-        String localImage = CloudRunImageMap.resolve(requestedContainer.getImage(), imageMap());
-        lifecycleManager.requireLocalImage(localImage);
-        com.google.cloud.run.v2.Container container = requestedContainer.toBuilder().setImage(localImage).build();
+        com.google.cloud.run.v2.Container container = revision.getContainers(0);
         int containerPort = ingressPort(container);
         String containerName = containerName(service.getName(), revision);
         List<CloudRunRuntimeVolumeMount> gcsVolumeMounts = prepareGcsVolumeMounts(revision, container);
@@ -140,17 +137,6 @@ public class CloudRunRuntimeService {
             deleteMaterializedGcsVolumes(gcsVolumeMounts);
             throw e;
         }
-    }
-
-    private List<String> imageMap() {
-        String imageMap = config.services().cloudrun().execution().imageMap();
-        if (imageMap == null || imageMap.isBlank()) {
-            return List.of();
-        }
-        return Arrays.stream(imageMap.split(","))
-                .map(String::trim)
-                .filter(mapping -> !mapping.isEmpty())
-                .toList();
     }
 
     public void stopService(String serviceName) {

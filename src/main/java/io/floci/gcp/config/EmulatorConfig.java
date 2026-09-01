@@ -357,10 +357,6 @@ public interface EmulatorConfig {
             Duration cleanupTimeout();
 
             Optional<String> urlHostSuffix();
-
-            /** Comma-separated exact {@code requested-image=local-image} mappings permitted for Cloud Run execution. */
-            @WithDefault("disabled")
-            String imageMap();
         }
     }
 
