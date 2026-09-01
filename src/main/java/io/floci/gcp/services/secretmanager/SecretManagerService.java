@@ -4,7 +4,6 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.google.iam.v1.Policy;
 import io.floci.gcp.config.EmulatorConfig;
 import io.floci.gcp.core.common.GcpException;
-import io.floci.gcp.core.common.TestFaultInjector;
 import io.floci.gcp.core.common.ServiceDescriptor;
 import io.floci.gcp.core.common.ServiceProtocol;
 import io.floci.gcp.core.common.ServiceRegistry;
@@ -44,16 +43,14 @@ public class SecretManagerService {
     private final EmulatorConfig config;
     private final GrpcServerManager grpcServerManager;
     private final IamService iamService;
-    private final TestFaultInjector faults;
 
     @Inject
     public SecretManagerService(ServiceRegistry serviceRegistry, EmulatorConfig config,
-            StorageFactory storageFactory, GrpcServerManager grpcServerManager, IamService iamService, TestFaultInjector faults) {
+            StorageFactory storageFactory, GrpcServerManager grpcServerManager, IamService iamService) {
         this.serviceRegistry = serviceRegistry;
         this.config = config;
         this.grpcServerManager = grpcServerManager;
         this.iamService = iamService;
-        this.faults = faults;
         this.secretStore = storageFactory.createGlobal("secretmanager-secrets", "secretmanager-secrets.json",
                 new TypeReference<Map<String, StoredSecret>>() {});
         this.versionStore = storageFactory.createGlobal("secretmanager-versions", "secretmanager-versions.json",
@@ -65,12 +62,6 @@ public class SecretManagerService {
     SecretManagerService(StorageBackend<String, StoredSecret> secretStore,
             StorageBackend<String, StoredSecretVersion> versionStore,
             StorageBackend<String, String> pendingDeletionStore, IamService iamService) {
-        this(secretStore, versionStore, pendingDeletionStore, iamService, new TestFaultInjector(false));
-    }
-
-    SecretManagerService(StorageBackend<String, StoredSecret> secretStore,
-            StorageBackend<String, StoredSecretVersion> versionStore,
-            StorageBackend<String, String> pendingDeletionStore, IamService iamService, TestFaultInjector faults) {
         this.secretStore = secretStore;
         this.versionStore = versionStore;
         this.pendingDeletionStore = pendingDeletionStore;
@@ -78,7 +69,6 @@ public class SecretManagerService {
         this.config = null;
         this.grpcServerManager = null;
         this.iamService = iamService;
-        this.faults = faults;
         registerPolicyResolver();
     }
 
@@ -268,8 +258,6 @@ public class SecretManagerService {
 
     public StoredSecretVersion accessSecretVersion(String versionedName) {
         LOG.debugf("accessSecretVersion name=%s", versionedName);
-        String injectedFailure = faults.consume("secret.read");
-        if (injectedFailure != null) throw GcpException.unavailable(injectedFailure);
         String secretName = secretNameForVersion(versionedName);
         synchronized (secretLock(secretName)) {
             requireSecretExists(secretName);
