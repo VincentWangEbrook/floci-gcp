@@ -1,7 +1,6 @@
 package io.floci.gcp.services.scheduler;
 
 import io.floci.gcp.config.EmulatorConfig;
-import io.floci.gcp.core.common.EmulatorClock;
 import io.floci.gcp.services.scheduler.model.StoredJob;
 import io.quarkus.runtime.ShutdownEvent;
 import io.quarkus.runtime.StartupEvent;
@@ -34,17 +33,15 @@ public class ScheduleDispatcher {
     private final SchedulerService schedulerService;
     private final long tickIntervalSeconds;
     private final boolean enabled;
-    private final EmulatorClock clock;
     private final ScheduledExecutorService executor;
     private final ConcurrentHashMap<String, Instant> lastFireByName = new ConcurrentHashMap<>();
 
     @Inject
-    public ScheduleDispatcher(SchedulerService schedulerService, EmulatorConfig config, EmulatorClock clock) {
+    public ScheduleDispatcher(SchedulerService schedulerService, EmulatorConfig config) {
         this.schedulerService = schedulerService;
         this.tickIntervalSeconds = config.services().scheduler().tickIntervalSeconds();
         this.enabled = config.services().scheduler().enabled()
                 && config.services().scheduler().invocationEnabled();
-        this.clock = clock;
         this.executor = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "scheduler-dispatcher");
             t.setDaemon(true);
@@ -67,7 +64,7 @@ public class ScheduleDispatcher {
 
     void tickSafely() {
         try {
-            tick(clock.instant());
+            tick(Instant.now());
         } catch (Throwable t) {
             LOG.warnv("Scheduler dispatcher tick failed: {0}", t.getMessage());
         }
