@@ -3,7 +3,6 @@ package io.floci.gcp.services.scheduler;
 import com.google.protobuf.ByteString;
 import com.google.pubsub.v1.PubsubMessage;
 import io.floci.gcp.services.pubsub.PubSubService;
-import io.floci.gcp.core.common.TestFaultInjector;
 import io.floci.gcp.services.scheduler.model.StoredJob;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -39,21 +38,18 @@ public class ScheduleInvoker {
     private static final int CODE_UNKNOWN = 2;
 
     private final PubSubService pubSubService;
-    private final TestFaultInjector faults;
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
 
     @Inject
-    public ScheduleInvoker(PubSubService pubSubService, TestFaultInjector faults) {
+    public ScheduleInvoker(PubSubService pubSubService) {
         this.pubSubService = pubSubService;
-        this.faults = faults;
     }
 
     // Test constructor.
     ScheduleInvoker(PubSubService pubSubService, boolean ignored) {
         this.pubSubService = pubSubService;
-        this.faults = new TestFaultInjector(false);
     }
 
     /** Result of a dispatch attempt, mapped onto the job's google.rpc.Status. */
@@ -68,10 +64,6 @@ public class ScheduleInvoker {
     }
 
     public InvokeResult invoke(StoredJob job) {
-        String injectedFailure = faults.consume("scheduler.dispatch");
-        if (injectedFailure != null) {
-            return InvokeResult.error(injectedFailure);
-        }
         String targetType = job.getTargetType();
         if (targetType == null) {
             return InvokeResult.error("Job has no target");

@@ -18,12 +18,4 @@ class TestControlControllerIntegrationTest {
                 .then().statusCode(200).extract().path("now");
         assertEquals(advanced, after);
     }
-
-    @Test
-    void armsOnlyWhitelistedFaults() {
-        given().queryParam("operation", "scheduler.dispatch").when().post("/_floci-gcp/test/time/faults/arm")
-                .then().statusCode(200);
-        given().queryParam("operation", "unsupported").when().post("/_floci-gcp/test/time/faults/arm")
-                .then().statusCode(400);
-    }
 }
