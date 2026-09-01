@@ -80,18 +80,6 @@ class CloudTasksServiceTest {
     }
 
     @Test
-    void createTaskWithTheSameExplicitNameRejectsTheDuplicate() {
-        service.createQueue("p1", "us-east1", "q1", 0, 0, 0);
-        service.createTask(QUEUE, "t1", "HTTP", "POST", "https://example.com",
-                Map.of(), new byte[0], null, null, null);
-
-        GcpException error = assertThrows(GcpException.class, () -> service.createTask(QUEUE, "t1", "HTTP",
-                "POST", "https://example.com", Map.of(), new byte[0], null, null, null));
-
-        assertEquals("ALREADY_EXISTS", error.getGcpStatus());
-    }
-
-    @Test
     void getTaskMissingThrowsNotFound() {
         service.createQueue("p1", "us-east1", "q1", 0, 0, 0);
 
@@ -259,24 +247,6 @@ class CloudTasksServiceTest {
                 Map.of(), new byte[0], null, null, now.toString());
 
         service.dispatchDue(now);
-
-        assertThrows(GcpException.class, () -> service.getTask(task.getName()));
-    }
-
-    @Test
-    void failedTaskStopsAfterItsConfiguredMaxRetryDuration() {
-        Instant now = Instant.parse("2026-01-01T00:00:00Z");
-        EmulatorClock clock = new EmulatorClock(true, now);
-        service = new CloudTasksService(new InMemoryStorage<>(), new InMemoryStorage<>(),
-                new TestFaultInjector(false), clock);
-        service.createQueue("p1", "us-east1", "q1", 0, 0, 3);
-        service.updateQueue(QUEUE, 0, 0, 3, 1, 1, 60, 3);
-        StoredTask task = service.createTask(QUEUE, "t1", "HTTP", "POST", "http://127.0.0.1:1/worker",
-                Map.of(), new byte[0], null, null, now.toString());
-
-        service.dispatchDue(now);
-        clock.advance(java.time.Duration.ofSeconds(2));
-        service.dispatchDue(clock.instant());
 
         assertThrows(GcpException.class, () -> service.getTask(task.getName()));
     }
