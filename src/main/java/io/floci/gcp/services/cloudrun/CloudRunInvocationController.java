@@ -1,6 +1,7 @@
 package io.floci.gcp.services.cloudrun;
 
 import io.floci.gcp.core.common.GcpException;
+import io.floci.gcp.core.common.TestFaultInjector;
 import io.floci.gcp.services.cloudrun.model.CloudRunRuntimeInstance;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -52,16 +53,22 @@ public class CloudRunInvocationController {
 
     private final CloudRunService cloudRunService;
     private final HttpClient httpClient;
+    private final TestFaultInjector faults;
 
     @Context
     ContainerRequestContext requestContext;
 
     @Inject
-    public CloudRunInvocationController(CloudRunService cloudRunService) {
+    public CloudRunInvocationController(CloudRunService cloudRunService, TestFaultInjector faults) {
         this.cloudRunService = cloudRunService;
+        this.faults = faults;
         this.httpClient = HttpClient.newBuilder()
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
+    }
+
+    CloudRunInvocationController(CloudRunService cloudRunService) {
+        this(cloudRunService, new TestFaultInjector(false));
     }
 
     @GET
@@ -183,6 +190,8 @@ public class CloudRunInvocationController {
 
     private Response proxy(String method, String project, String location, String serviceId,
                            byte[] body, HttpHeaders headers, UriInfo uriInfo) {
+        String injectedFailure = faults.consume("run.invoke");
+        if (injectedFailure != null) throw GcpException.unavailable(injectedFailure);
         String serviceName = "projects/" + project + "/locations/" + location + "/services/" + serviceId;
         CloudRunRuntimeInstance instance = cloudRunService.readyRuntime(serviceName)
                 .orElseThrow(() -> GcpException.unavailable("Cloud Run service has no ready runtime: " + serviceName));
