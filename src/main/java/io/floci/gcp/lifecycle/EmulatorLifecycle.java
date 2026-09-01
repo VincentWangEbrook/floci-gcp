@@ -4,7 +4,6 @@ import io.floci.gcp.config.EmulatorConfig;
 import io.floci.gcp.core.common.ContainerTeardown;
 import io.floci.gcp.core.common.ServiceRegistry;
 import io.floci.gcp.core.storage.PersistentPathValidator;
-import io.floci.gcp.core.storage.StateSchemaManager;
 import io.floci.gcp.core.storage.StorageFactory;
 import io.floci.gcp.core.tls.TlsConfigSource;
 import io.floci.gcp.core.tls.TlsProxyServer;
@@ -81,8 +80,6 @@ public class EmulatorLifecycle {
         initLifecycleState.markBootCompleted();
 
         persistentPathValidator.validateAtBoot();
-        new StateSchemaManager(java.nio.file.Path.of(config.storage().persistentPath()), config.storage().mode())
-                .ensureCompatible();
 
         storageFactory.loadAll();
 

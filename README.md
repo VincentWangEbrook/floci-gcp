@@ -276,12 +276,6 @@ docker run -d --name floci-gcp \
 
 floci-gcp supports flexible storage modes. Configure globally via `FLOCI_GCP_STORAGE_MODE`.
 
-When using `persistent`, `hybrid`, or `wal`, floci-gcp writes `.floci-gcp-state.json` to the
-state directory before loading service data. The first versioned release adopts an existing
-unversioned directory without rewriting it. A future incompatible schema stops startup without
-changing data and names the state directory to reset in the error message; remove that directory
-only after intentionally discarding its local state.
-
 | Mode | Behavior | Best for | Durability |
 |:---:|---|---|:---:|
 | **`memory`** | **(Default)** Entirely in-RAM. Lost on container stop. | Speed, CI pipelines | ❌ None |
