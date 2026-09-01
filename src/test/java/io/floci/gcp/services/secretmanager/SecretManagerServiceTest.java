@@ -26,6 +26,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
+import io.floci.gcp.core.common.TestFaultInjector;
 
 class SecretManagerServiceTest {
 
@@ -62,6 +63,20 @@ class SecretManagerServiceTest {
         GcpException ex = assertThrows(GcpException.class,
                 () -> service.getSecret("projects/p1/secrets/missing"));
         assertEquals("NOT_FOUND", ex.getGcpStatus());
+    }
+
+    @Test
+    void accessSecretVersionSurfacesAnInjectedReadFailure() {
+        TestFaultInjector faults = new TestFaultInjector(true);
+        service = new SecretManagerService(new InMemoryStorage<>(), new InMemoryStorage<>(), new InMemoryStorage<>(),
+                IamServices.inMemory(), faults);
+        service.createSecret("p1", "s1", "automatic");
+        service.addSecretVersion("projects/p1/secrets/s1", "value".getBytes(), null);
+        faults.arm("secret.read", "simulated secret outage");
+
+        GcpException error = assertThrows(GcpException.class,
+                () -> service.accessSecretVersion("projects/p1/secrets/s1/versions/latest"));
+        assertEquals("UNAVAILABLE", error.getGcpStatus());
     }
 
     @Test
