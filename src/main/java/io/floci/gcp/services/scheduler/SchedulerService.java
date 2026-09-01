@@ -230,8 +230,6 @@ public class SchedulerService {
         to.setHttpMethod(from.getHttpMethod());
         to.setHttpHeaders(from.getHttpHeaders());
         to.setHttpBody(from.getHttpBody());
-        to.setOidcServiceAccountEmail(from.getOidcServiceAccountEmail());
-        to.setOidcAudience(from.getOidcAudience());
         to.setAppEngineHttpMethod(from.getAppEngineHttpMethod());
         to.setAppEngineRelativeUri(from.getAppEngineRelativeUri());
         to.setAppEngineHeaders(from.getAppEngineHeaders());

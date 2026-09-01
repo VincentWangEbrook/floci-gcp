@@ -124,9 +124,6 @@ public class ScheduleInvoker {
                 }
             }
         }
-        if (job.getOidcServiceAccountEmail() != null && isLocalProxyTarget(job.getHttpUri())) {
-            req.header("X-Floci-Local-Oidc-Service-Account", job.getOidcServiceAccountEmail());
-        }
         HttpResponse<Void> resp = httpClient.send(req.build(), HttpResponse.BodyHandlers.discarding());
         int status = resp.statusCode();
         LOG.infof("Job %s dispatched to %s -> HTTP %d", job.getName(), job.getHttpUri(), status);
@@ -144,15 +141,5 @@ public class ScheduleInvoker {
     private static long attemptDeadlineOr(StoredJob job, long fallbackSeconds) {
         long d = job.getAttemptDeadlineSeconds();
         return d > 0 ? d : fallbackSeconds;
-    }
-
-    private static boolean isLocalProxyTarget(String uri) {
-        try {
-            String host = URI.create(uri).getHost();
-            return "127.0.0.1".equals(host) || "localhost".equals(host)
-                    || "host.docker.internal".equals(host);
-        } catch (IllegalArgumentException ignored) {
-            return false;
-        }
     }
 }

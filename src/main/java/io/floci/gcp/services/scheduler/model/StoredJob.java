@@ -24,8 +24,6 @@ public class StoredJob {
     private String httpMethod;
     private Map<String, String> httpHeaders;
     private byte[] httpBody;
-    private String oidcServiceAccountEmail;
-    private String oidcAudience;
 
     // AppEngineHttpTarget fields
     private String appEngineHttpMethod;
@@ -94,12 +92,6 @@ public class StoredJob {
 
     public byte[] getHttpBody() { return httpBody; }
     public void setHttpBody(byte[] b) { this.httpBody = b; }
-
-    public String getOidcServiceAccountEmail() { return oidcServiceAccountEmail; }
-    public void setOidcServiceAccountEmail(String email) { this.oidcServiceAccountEmail = email; }
-
-    public String getOidcAudience() { return oidcAudience; }
-    public void setOidcAudience(String audience) { this.oidcAudience = audience; }
 
     public String getAppEngineHttpMethod() { return appEngineHttpMethod; }
     public void setAppEngineHttpMethod(String m) { this.appEngineHttpMethod = m; }
