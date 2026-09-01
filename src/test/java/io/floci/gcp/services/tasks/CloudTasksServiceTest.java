@@ -10,6 +10,9 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.net.InetSocketAddress;
+import com.sun.net.httpserver.HttpServer;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -129,5 +132,29 @@ class CloudTasksServiceTest {
 
         GcpException error = assertThrows(GcpException.class, () -> service.runTask(task.getName()));
         assertEquals("UNAVAILABLE", error.getGcpStatus());
+    }
+
+    @Test
+    void runTaskDispatchesHttpAndDeletesOnlyAfterA2xxResponse() throws Exception {
+        AtomicReference<String> taskNameHeader = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/worker", exchange -> {
+            taskNameHeader.set(exchange.getRequestHeaders().getFirst("X-CloudTasks-TaskName"));
+            exchange.sendResponseHeaders(204, -1);
+            exchange.close();
+        });
+        server.start();
+        try {
+            service.createQueue("p1", "us-east1", "q1", 0, 0, 0);
+            StoredTask task = service.createTask(QUEUE, "t1", "HTTP", "POST",
+                    "http://127.0.0.1:" + server.getAddress().getPort() + "/worker", Map.of(), new byte[0], null, null, null);
+
+            service.runTask(task.getName());
+
+            assertEquals(task.getName(), taskNameHeader.get());
+            assertThrows(GcpException.class, () -> service.getTask(task.getName()));
+        } finally {
+            server.stop(0);
+        }
     }
 }
