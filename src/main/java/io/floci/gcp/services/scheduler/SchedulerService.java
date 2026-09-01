@@ -179,7 +179,6 @@ public class SchedulerService {
         LOG.infof("runJob name=%s", name);
         StoredJob job = getJob(name);
         recordAttempt(job, invoker.invoke(job));
-        scheduleRetryOrClear(job);
         jobStore.put(name, job);
         return job;
     }
@@ -187,18 +186,7 @@ public class SchedulerService {
     /** Used by the background dispatcher to fire a due job and persist the attempt result. */
     public void fireJob(StoredJob job, Instant scheduledFor) {
         recordAttempt(job, invoker.invoke(job));
-        if (!scheduleRetryOrClear(job)) {
-            job.setScheduleTime(computeNextScheduleTime(job, scheduledFor));
-        }
-        jobStore.put(job.getName(), job);
-    }
-
-    /** Invokes a retry that was scheduled after a failed cron delivery. */
-    public void retryJob(StoredJob job) {
-        recordAttempt(job, invoker.invoke(job));
-        if (!scheduleRetryOrClear(job)) {
-            job.setScheduleTime(computeNextScheduleTime(job, clock.instant()));
-        }
+        job.setScheduleTime(computeNextScheduleTime(job, scheduledFor));
         jobStore.put(job.getName(), job);
     }
 
@@ -206,41 +194,6 @@ public class SchedulerService {
         job.setLastAttemptTime(clock.instant().toString());
         job.setStatusCode(result.code());
         job.setStatusMessage(result.message());
-    }
-
-    private boolean scheduleRetryOrClear(StoredJob job) {
-        if (job.getStatusCode() == 0) {
-            clearRetry(job);
-            return false;
-        }
-        int nextAttempt = job.getRetryAttempt() + 1;
-        if (nextAttempt > job.getRetryCount()) {
-            clearRetry(job);
-            return false;
-        }
-        Instant retryStart = job.getRetryStartTime() == null ? clock.instant() : Instant.parse(job.getRetryStartTime());
-        long maxDuration = job.getMaxRetryDurationSeconds();
-        if (maxDuration > 0 && !clock.instant().isBefore(retryStart.plusSeconds(maxDuration))) {
-            clearRetry(job);
-            return false;
-        }
-        job.setRetryAttempt(nextAttempt);
-        job.setRetryStartTime(retryStart.toString());
-        job.setRetryScheduleTime(clock.instant().plusSeconds(retryBackoffSeconds(job, nextAttempt)).toString());
-        return true;
-    }
-
-    private static long retryBackoffSeconds(StoredJob job, int attempt) {
-        long minimum = job.getMinBackoffSeconds() > 0 ? job.getMinBackoffSeconds() : 5;
-        long maximum = job.getMaxBackoffSeconds() > 0 ? job.getMaxBackoffSeconds() : 3600;
-        int exponent = Math.min(Math.max(attempt - 1, 0), Math.min(job.getMaxDoublings(), 30));
-        return Math.min(minimum * (1L << exponent), maximum);
-    }
-
-    private static void clearRetry(StoredJob job) {
-        job.setRetryAttempt(0);
-        job.setRetryStartTime(null);
-        job.setRetryScheduleTime(null);
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────────

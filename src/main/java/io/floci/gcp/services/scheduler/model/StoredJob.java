@@ -45,9 +45,6 @@ public class StoredJob {
 
     // RetryConfig fields
     private int retryCount;
-    private int retryAttempt;
-    private String retryStartTime;
-    private String retryScheduleTime;
     private long maxRetryDurationSeconds;
     private long minBackoffSeconds;
     private long maxBackoffSeconds;
@@ -139,15 +136,6 @@ public class StoredJob {
 
     public int getRetryCount() { return retryCount; }
     public void setRetryCount(int n) { this.retryCount = n; }
-
-    public int getRetryAttempt() { return retryAttempt; }
-    public void setRetryAttempt(int n) { this.retryAttempt = n; }
-
-    public String getRetryStartTime() { return retryStartTime; }
-    public void setRetryStartTime(String t) { this.retryStartTime = t; }
-
-    public String getRetryScheduleTime() { return retryScheduleTime; }
-    public void setRetryScheduleTime(String t) { this.retryScheduleTime = t; }
 
     public long getMaxRetryDurationSeconds() { return maxRetryDurationSeconds; }
     public void setMaxRetryDurationSeconds(long s) { this.maxRetryDurationSeconds = s; }

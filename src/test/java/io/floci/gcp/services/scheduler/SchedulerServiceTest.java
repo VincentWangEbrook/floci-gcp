@@ -1,18 +1,12 @@
 package io.floci.gcp.services.scheduler;
 
 import io.floci.gcp.core.common.GcpException;
-import io.floci.gcp.core.common.EmulatorClock;
 import io.floci.gcp.core.storage.InMemoryStorage;
 import io.floci.gcp.services.scheduler.model.StoredJob;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
-import java.time.Instant;
-import java.time.Duration;
-import java.net.InetSocketAddress;
-import java.util.concurrent.atomic.AtomicInteger;
-import com.sun.net.httpserver.HttpServer;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -111,42 +105,5 @@ class SchedulerServiceTest {
         service.createJob(PARENT, job);
         StoredJob ran = service.runJob(NAME);
         assertNotNull(ran.getLastAttemptTime(), "runJob must record a last-attempt time");
-    }
-
-    @Test
-    void scheduledFailureRetriesUsingTheVirtualClock() throws Exception {
-        Instant now = Instant.parse("2026-01-01T00:00:00Z");
-        EmulatorClock clock = new EmulatorClock(true, now);
-        service = new SchedulerService(new InMemoryStorage<>(), new ScheduleInvoker(null, true), clock);
-        AtomicInteger attempts = new AtomicInteger();
-        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext("/cron", exchange -> {
-            exchange.sendResponseHeaders(attempts.incrementAndGet() == 1 ? 503 : 204, -1);
-            exchange.close();
-        });
-        server.start();
-        try {
-            StoredJob job = pubsubJob("j1");
-            job.setTargetType("HTTP");
-            job.setHttpUri("http://127.0.0.1:" + server.getAddress().getPort() + "/cron");
-            job.setRetryCount(1);
-            job.setMinBackoffSeconds(1);
-            job.setMaxBackoffSeconds(10);
-            StoredJob created = service.createJob(PARENT, job);
-
-            service.fireJob(created, now);
-
-            StoredJob retry = service.getJob(NAME);
-            assertEquals(now.plusSeconds(1).toString(), retry.getRetryScheduleTime());
-            assertEquals(1, retry.getRetryAttempt());
-
-            clock.advance(Duration.ofSeconds(1));
-            service.retryJob(retry);
-
-            assertEquals(2, attempts.get());
-            assertNull(service.getJob(NAME).getRetryScheduleTime());
-        } finally {
-            server.stop(0);
-        }
     }
 }

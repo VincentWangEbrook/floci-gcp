@@ -92,13 +92,6 @@ public class ScheduleDispatcher {
             return;
         }
 
-        if (job.getRetryScheduleTime() != null) {
-            if (!Instant.parse(job.getRetryScheduleTime()).isAfter(now)) {
-                schedulerService.retryJob(job);
-            }
-            return;
-        }
-
         Instant base = lastFireByName.computeIfAbsent(job.getName(), n -> seedBase(job, now));
         Instant nextFire;
         try {
