@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.floci.gcp.config.EmulatorConfig;
 import io.floci.gcp.core.common.GcpException;
+import io.floci.gcp.core.common.TestFaultInjector;
 import io.floci.gcp.core.common.ServiceDescriptor;
 import io.floci.gcp.core.common.ServiceProtocol;
 import io.floci.gcp.core.common.ServiceRegistry;
@@ -48,15 +49,17 @@ public class IamService {
     private final ServiceRegistry serviceRegistry;
     private final EmulatorConfig config;
     private final GrpcServerManager grpcServerManager;
+    private final TestFaultInjector faults;
     private final AtomicLong uniqueIdSeq = new AtomicLong(100000000000000000L);
     private final Map<String, Consumer<String>> policyResolvers = new ConcurrentHashMap<>();
 
     @Inject
     public IamService(ServiceRegistry serviceRegistry, EmulatorConfig config, StorageFactory storageFactory,
-            GrpcServerManager grpcServerManager) {
+            GrpcServerManager grpcServerManager, TestFaultInjector faults) {
         this.serviceRegistry = serviceRegistry;
         this.config = config;
         this.grpcServerManager = grpcServerManager;
+        this.faults = faults;
         this.saStore = storageFactory.createGlobal("iam-service-accounts", "iam-service-accounts.json",
                 new TypeReference<Map<String, StoredServiceAccount>>() {});
         this.keyStore = storageFactory.createGlobal("iam-sa-keys", "iam-sa-keys.json",
@@ -68,12 +71,19 @@ public class IamService {
     IamService(StorageBackend<String, StoredServiceAccount> saStore,
             StorageBackend<String, StoredServiceAccountKey> keyStore,
             StorageBackend<String, StoredPolicy> policyStore) {
+        this(saStore, keyStore, policyStore, new TestFaultInjector(false));
+    }
+
+    IamService(StorageBackend<String, StoredServiceAccount> saStore,
+            StorageBackend<String, StoredServiceAccountKey> keyStore,
+            StorageBackend<String, StoredPolicy> policyStore, TestFaultInjector faults) {
         this.saStore = saStore;
         this.keyStore = keyStore;
         this.policyStore = policyStore;
         this.serviceRegistry = null;
         this.config = null;
         this.grpcServerManager = null;
+        this.faults = faults;
     }
 
     void onStart(@Observes StartupEvent ev) {
@@ -236,6 +246,8 @@ public class IamService {
      * (pubsub_v1.yaml). Stored bindings are never consulted.
      */
     public List<String> testPermissions(String resource, List<String> permissions) {
+        String injectedFailure = faults.consume("iam.authorize");
+        if (injectedFailure != null) throw GcpException.permissionDenied(injectedFailure);
         try {
             requireResourceExists(resource);
         } catch (GcpException e) {
