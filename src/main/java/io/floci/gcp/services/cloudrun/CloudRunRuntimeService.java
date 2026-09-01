@@ -259,7 +259,9 @@ public class CloudRunRuntimeService {
                 builder.withBind(mount.hostPath(), mount.mountPath());
             }
         }
-        return builder.build();
+        ContainerSpec spec = builder.build();
+        CloudRunContainerSecurityPolicy.validate(spec);
+        return spec;
     }
 
     private void stopInstance(CloudRunRuntimeInstance instance) {
