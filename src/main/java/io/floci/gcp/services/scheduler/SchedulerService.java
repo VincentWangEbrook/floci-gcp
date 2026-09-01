@@ -3,6 +3,7 @@ package io.floci.gcp.services.scheduler;
 import com.fasterxml.jackson.core.type.TypeReference;
 import io.floci.gcp.config.EmulatorConfig;
 import io.floci.gcp.core.common.GcpException;
+import io.floci.gcp.core.common.EmulatorClock;
 import io.floci.gcp.core.common.ServiceDescriptor;
 import io.floci.gcp.core.common.ServiceProtocol;
 import io.floci.gcp.core.common.ServiceRegistry;
@@ -28,6 +29,7 @@ public class SchedulerService {
 
     private final StorageBackend<String, StoredJob> jobStore;
     private final ScheduleInvoker invoker;
+    private final EmulatorClock clock;
 
     private final ServiceRegistry serviceRegistry;
     private final EmulatorConfig config;
@@ -36,18 +38,24 @@ public class SchedulerService {
     @Inject
     public SchedulerService(ServiceRegistry serviceRegistry, EmulatorConfig config,
             StorageFactory storageFactory, GrpcServerManager grpcServerManager,
-            ScheduleInvoker invoker) {
+            ScheduleInvoker invoker, EmulatorClock clock) {
         this.serviceRegistry = serviceRegistry;
         this.config = config;
         this.grpcServerManager = grpcServerManager;
         this.invoker = invoker;
+        this.clock = clock;
         this.jobStore = storageFactory.createGlobal("cloudscheduler-jobs", "cloudscheduler-jobs.json",
                 new TypeReference<Map<String, StoredJob>>() {});
     }
 
     SchedulerService(StorageBackend<String, StoredJob> jobStore, ScheduleInvoker invoker) {
+        this(jobStore, invoker, new EmulatorClock(false, null));
+    }
+
+    SchedulerService(StorageBackend<String, StoredJob> jobStore, ScheduleInvoker invoker, EmulatorClock clock) {
         this.jobStore = jobStore;
         this.invoker = invoker;
+        this.clock = clock;
         this.serviceRegistry = null;
         this.config = null;
         this.grpcServerManager = null;
@@ -77,12 +85,12 @@ public class SchedulerService {
         }
         validateSchedule(job.getSchedule());
 
-        String now = Instant.now().toString();
+        String now = clock.instant().toString();
         job.setName(name);
         job.setState("ENABLED");
         job.setCreateTime(now);
         job.setUserUpdateTime(now);
-        job.setScheduleTime(computeNextScheduleTime(job, Instant.now()));
+        job.setScheduleTime(computeNextScheduleTime(job, clock.instant()));
         jobStore.put(name, job);
         return job;
     }
@@ -134,8 +142,8 @@ public class SchedulerService {
             copyTarget(incoming, existing);
         }
 
-        existing.setUserUpdateTime(Instant.now().toString());
-        existing.setScheduleTime(computeNextScheduleTime(existing, Instant.now()));
+        existing.setUserUpdateTime(clock.instant().toString());
+        existing.setScheduleTime(computeNextScheduleTime(existing, clock.instant()));
         jobStore.put(name, existing);
         return existing;
     }
@@ -162,7 +170,7 @@ public class SchedulerService {
         LOG.infof("resumeJob name=%s", name);
         StoredJob job = getJob(name);
         job.setState("ENABLED");
-        job.setScheduleTime(computeNextScheduleTime(job, Instant.now()));
+        job.setScheduleTime(computeNextScheduleTime(job, clock.instant()));
         jobStore.put(name, job);
         return job;
     }
@@ -183,7 +191,7 @@ public class SchedulerService {
     }
 
     private void recordAttempt(StoredJob job, ScheduleInvoker.InvokeResult result) {
-        job.setLastAttemptTime(Instant.now().toString());
+        job.setLastAttemptTime(clock.instant().toString());
         job.setStatusCode(result.code());
         job.setStatusMessage(result.message());
     }
