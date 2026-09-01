@@ -3,6 +3,7 @@ package io.floci.gcp.services.tasks;
 import com.fasterxml.jackson.core.type.TypeReference;
 import io.floci.gcp.config.EmulatorConfig;
 import io.floci.gcp.core.common.GcpException;
+import io.floci.gcp.core.common.TestFaultInjector;
 import io.floci.gcp.core.common.ServiceDescriptor;
 import io.floci.gcp.core.common.ServiceProtocol;
 import io.floci.gcp.core.common.ServiceRegistry;
@@ -29,6 +30,7 @@ public class CloudTasksService {
 
     private final StorageBackend<String, StoredQueue> queueStore;
     private final StorageBackend<String, StoredTask> taskStore;
+    private final TestFaultInjector faults;
 
     private final ServiceRegistry serviceRegistry;
     private final EmulatorConfig config;
@@ -36,10 +38,11 @@ public class CloudTasksService {
 
     @Inject
     public CloudTasksService(ServiceRegistry serviceRegistry, EmulatorConfig config,
-            StorageFactory storageFactory, GrpcServerManager grpcServerManager) {
+            StorageFactory storageFactory, GrpcServerManager grpcServerManager, TestFaultInjector faults) {
         this.serviceRegistry = serviceRegistry;
         this.config = config;
         this.grpcServerManager = grpcServerManager;
+        this.faults = faults;
         this.queueStore = storageFactory.createGlobal("cloudtasks-queues", "cloudtasks-queues.json",
                 new TypeReference<Map<String, StoredQueue>>() {});
         this.taskStore = storageFactory.createGlobal("cloudtasks-tasks", "cloudtasks-tasks.json",
@@ -48,8 +51,14 @@ public class CloudTasksService {
 
     CloudTasksService(StorageBackend<String, StoredQueue> queueStore,
             StorageBackend<String, StoredTask> taskStore) {
+        this(queueStore, taskStore, new TestFaultInjector(false));
+    }
+
+    CloudTasksService(StorageBackend<String, StoredQueue> queueStore,
+            StorageBackend<String, StoredTask> taskStore, TestFaultInjector faults) {
         this.queueStore = queueStore;
         this.taskStore = taskStore;
+        this.faults = faults;
         this.serviceRegistry = null;
         this.config = null;
         this.grpcServerManager = null;
@@ -213,6 +222,10 @@ public class CloudTasksService {
         LOG.infof("runTask name=%s", name);
         StoredTask task = taskStore.get(name)
                 .orElseThrow(() -> GcpException.notFound("Task not found: " + name));
+        String injectedFailure = faults.consume("tasks.dispatch");
+        if (injectedFailure != null) {
+            throw GcpException.unavailable(injectedFailure);
+        }
         task.setDispatchCount(task.getDispatchCount() + 1);
         taskStore.put(name, task);
         return task;
