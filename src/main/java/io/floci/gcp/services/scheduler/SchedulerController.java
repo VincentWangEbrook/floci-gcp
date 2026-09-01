@@ -179,6 +179,10 @@ public class SchedulerController extends CloudSchedulerGrpc.CloudSchedulerImplBa
                 job.setHttpHeaders(t.getHeadersMap());
             }
             job.setHttpBody(t.getBody().toByteArray());
+            if (t.hasOidcToken()) {
+                job.setOidcServiceAccountEmail(emptyToNull(t.getOidcToken().getServiceAccountEmail()));
+                job.setOidcAudience(emptyToNull(t.getOidcToken().getAudience()));
+            }
         } else if (proto.hasAppEngineHttpTarget()) {
             AppEngineHttpTarget t = proto.getAppEngineHttpTarget();
             job.setTargetType("APP_ENGINE");
@@ -244,6 +248,11 @@ public class SchedulerController extends CloudSchedulerGrpc.CloudSchedulerImplBa
             }
             if (stored.getHttpBody() != null) {
                 t.setBody(ByteString.copyFrom(stored.getHttpBody()));
+            }
+            if (stored.getOidcServiceAccountEmail() != null) {
+                t.setOidcToken(com.google.cloud.scheduler.v1.OidcToken.newBuilder()
+                        .setServiceAccountEmail(stored.getOidcServiceAccountEmail())
+                        .setAudience(stored.getOidcAudience() == null ? "" : stored.getOidcAudience()));
             }
             b.setHttpTarget(t.build());
         } else if ("APP_ENGINE".equals(stored.getTargetType())) {
