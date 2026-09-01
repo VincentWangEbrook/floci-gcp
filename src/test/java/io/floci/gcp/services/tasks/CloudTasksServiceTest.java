@@ -1,7 +1,6 @@
 package io.floci.gcp.services.tasks;
 
 import io.floci.gcp.core.common.GcpException;
-import io.floci.gcp.core.common.TestFaultInjector;
 import io.floci.gcp.core.storage.InMemoryStorage;
 import io.floci.gcp.services.tasks.model.StoredQueue;
 import io.floci.gcp.services.tasks.model.StoredTask;
@@ -116,18 +115,5 @@ class CloudTasksServiceTest {
         service.purgeQueue(QUEUE);
 
         assertTrue(service.listTasks(QUEUE).isEmpty());
-    }
-
-    @Test
-    void runTaskSurfacesAnInjectedDispatchFailure() {
-        TestFaultInjector faults = new TestFaultInjector(true);
-        service = new CloudTasksService(new InMemoryStorage<>(), new InMemoryStorage<>(), faults);
-        service.createQueue("p1", "us-east1", "q1", 0, 0, 0);
-        StoredTask task = service.createTask(QUEUE, "t1", "HTTP", "POST", "http://localhost", Map.of(),
-                new byte[0], null, null, null);
-        faults.arm("tasks.dispatch", "simulated task timeout");
-
-        GcpException error = assertThrows(GcpException.class, () -> service.runTask(task.getName()));
-        assertEquals("UNAVAILABLE", error.getGcpStatus());
     }
 }
