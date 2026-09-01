@@ -14,6 +14,7 @@ public class StoredQueue {
     private int maxConcurrentDispatches;
     private int maxBurstSize;
     private int maxAttempts;
+    private long maxRetryDurationSeconds;
     private long minBackoffSeconds;
     private long maxBackoffSeconds;
     private int maxDoublings;
@@ -57,6 +58,9 @@ public class StoredQueue {
 
     public int getMaxAttempts() { return maxAttempts; }
     public void setMaxAttempts(int v) { this.maxAttempts = v; }
+
+    public long getMaxRetryDurationSeconds() { return maxRetryDurationSeconds; }
+    public void setMaxRetryDurationSeconds(long v) { this.maxRetryDurationSeconds = v; }
 
     public long getMinBackoffSeconds() { return minBackoffSeconds; }
     public void setMinBackoffSeconds(long v) { this.minBackoffSeconds = v; }

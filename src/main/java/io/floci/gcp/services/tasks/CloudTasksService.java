@@ -96,12 +96,12 @@ public class CloudTasksService {
     public StoredQueue createQueue(String project, String location, String queueId,
             double maxDispatchesPerSecond, int maxConcurrentDispatches, int maxAttempts) {
         return createQueue(project, location, queueId, maxDispatchesPerSecond, maxConcurrentDispatches,
-                maxAttempts, 1, 3600, 16);
+                maxAttempts, 0, 1, 3600, 16);
     }
 
     public StoredQueue createQueue(String project, String location, String queueId,
             double maxDispatchesPerSecond, int maxConcurrentDispatches, int maxAttempts,
-            long minBackoffSeconds, long maxBackoffSeconds, int maxDoublings) {
+            long maxRetryDurationSeconds, long minBackoffSeconds, long maxBackoffSeconds, int maxDoublings) {
         String name = "projects/" + project + "/locations/" + location + "/queues/" + queueId;
         LOG.infof("createQueue name=%s", name);
         if (queueStore.get(name).isPresent()) {
@@ -117,7 +117,7 @@ public class CloudTasksService {
         if (maxAttempts > 0) {
             queue.setMaxAttempts(maxAttempts);
         }
-        setRetryConfiguration(queue, minBackoffSeconds, maxBackoffSeconds, maxDoublings);
+        setRetryConfiguration(queue, maxRetryDurationSeconds, minBackoffSeconds, maxBackoffSeconds, maxDoublings);
         queueStore.put(name, queue);
         return queue;
     }
@@ -142,6 +142,13 @@ public class CloudTasksService {
     public StoredQueue updateQueue(String name, double maxDispatchesPerSecond,
             int maxConcurrentDispatches, int maxAttempts, long minBackoffSeconds,
             long maxBackoffSeconds, int maxDoublings) {
+        return updateQueue(name, maxDispatchesPerSecond, maxConcurrentDispatches, maxAttempts,
+                0, minBackoffSeconds, maxBackoffSeconds, maxDoublings);
+    }
+
+    public StoredQueue updateQueue(String name, double maxDispatchesPerSecond,
+            int maxConcurrentDispatches, int maxAttempts, long maxRetryDurationSeconds,
+            long minBackoffSeconds, long maxBackoffSeconds, int maxDoublings) {
         LOG.infof("updateQueue name=%s", name);
         StoredQueue queue = queueStore.get(name)
                 .orElseThrow(() -> GcpException.notFound("Queue not found: " + name));
@@ -154,7 +161,7 @@ public class CloudTasksService {
         if (maxAttempts > 0) {
             queue.setMaxAttempts(maxAttempts);
         }
-        setRetryConfiguration(queue, minBackoffSeconds, maxBackoffSeconds, maxDoublings);
+        setRetryConfiguration(queue, maxRetryDurationSeconds, minBackoffSeconds, maxBackoffSeconds, maxDoublings);
         queueStore.put(name, queue);
         return queue;
     }
@@ -267,12 +274,15 @@ public class CloudTasksService {
             throw GcpException.unavailable(injectedFailure);
         }
         task.setDispatchCount(task.getDispatchCount() + 1);
+        if (task.getFirstAttemptTime() == null) {
+            task.setFirstAttemptTime(clock.instant().toString());
+        }
         if (dispatchHttpTask(task)) {
             taskStore.delete(name);
         } else {
             task.setResponseCount(task.getResponseCount() + 1);
             StoredQueue queue = getQueue(queueName(task));
-            if (task.getDispatchCount() >= queue.getMaxAttempts()) {
+            if (task.getDispatchCount() >= queue.getMaxAttempts() || retryWindowExpired(queue, task)) {
                 taskStore.delete(name);
             } else {
                 task.setScheduleTime(clock.instant().plusSeconds(retryBackoffSeconds(queue, task.getResponseCount())).toString());
@@ -342,8 +352,17 @@ public class CloudTasksService {
         return seconds;
     }
 
-    private static void setRetryConfiguration(StoredQueue queue, long minBackoffSeconds,
+    private boolean retryWindowExpired(StoredQueue queue, StoredTask task) {
+        if (queue.getMaxRetryDurationSeconds() <= 0 || task.getFirstAttemptTime() == null) {
+            return false;
+        }
+        Instant deadline = Instant.parse(task.getFirstAttemptTime()).plusSeconds(queue.getMaxRetryDurationSeconds());
+        return !clock.instant().isBefore(deadline);
+    }
+
+    private void setRetryConfiguration(StoredQueue queue, long maxRetryDurationSeconds, long minBackoffSeconds,
             long maxBackoffSeconds, int maxDoublings) {
+        if (maxRetryDurationSeconds > 0) queue.setMaxRetryDurationSeconds(maxRetryDurationSeconds);
         if (minBackoffSeconds > 0) queue.setMinBackoffSeconds(minBackoffSeconds);
         if (maxBackoffSeconds > 0) queue.setMaxBackoffSeconds(maxBackoffSeconds);
         if (maxDoublings >= 0) queue.setMaxDoublings(maxDoublings);

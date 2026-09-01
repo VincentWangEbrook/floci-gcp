@@ -79,6 +79,7 @@ public class CloudTasksController extends CloudTasksGrpc.CloudTasksImplBase {
                     rl.getMaxDispatchesPerSecond(),
                     rl.getMaxConcurrentDispatches(),
                     rc.getMaxAttempts(),
+                    durationSeconds(rc.getMaxRetryDuration()),
                     durationSeconds(rc.getMinBackoff()),
                     durationSeconds(rc.getMaxBackoff()),
                     rc.getMaxDoublings());
@@ -101,6 +102,7 @@ public class CloudTasksController extends CloudTasksGrpc.CloudTasksImplBase {
                     rl.getMaxDispatchesPerSecond(),
                     rl.getMaxConcurrentDispatches(),
                     rc.getMaxAttempts(),
+                    durationSeconds(rc.getMaxRetryDuration()),
                     durationSeconds(rc.getMinBackoff()),
                     durationSeconds(rc.getMaxBackoff()),
                     rc.getMaxDoublings());
@@ -326,6 +328,8 @@ public class CloudTasksController extends CloudTasksGrpc.CloudTasksImplBase {
                         .build())
                 .setRetryConfig(RetryConfig.newBuilder()
                         .setMaxAttempts(stored.getMaxAttempts())
+                        .setMaxRetryDuration(com.google.protobuf.Duration.newBuilder()
+                                .setSeconds(stored.getMaxRetryDurationSeconds()))
                         .setMinBackoff(com.google.protobuf.Duration.newBuilder()
                                 .setSeconds(stored.getMinBackoffSeconds()))
                         .setMaxBackoff(com.google.protobuf.Duration.newBuilder()

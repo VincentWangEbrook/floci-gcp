@@ -13,6 +13,7 @@ public class StoredTask {
     private String scheduleTime;
     private int dispatchCount;
     private int responseCount;
+    private String firstAttemptTime;
     private long dispatchDeadlineSeconds = 600;
 
     // "HTTP" or "APP_ENGINE"
@@ -48,6 +49,9 @@ public class StoredTask {
 
     public long getDispatchDeadlineSeconds() { return dispatchDeadlineSeconds; }
     public void setDispatchDeadlineSeconds(long seconds) { this.dispatchDeadlineSeconds = seconds; }
+
+    public String getFirstAttemptTime() { return firstAttemptTime; }
+    public void setFirstAttemptTime(String time) { this.firstAttemptTime = time; }
 
     public String getTaskType() { return taskType; }
     public void setTaskType(String t) { this.taskType = t; }
