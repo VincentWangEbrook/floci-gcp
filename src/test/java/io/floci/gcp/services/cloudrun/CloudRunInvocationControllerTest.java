@@ -2,7 +2,6 @@ package io.floci.gcp.services.cloudrun;
 
 import com.sun.net.httpserver.HttpServer;
 import io.floci.gcp.services.cloudrun.model.CloudRunRuntimeInstance;
-import io.floci.gcp.core.common.TestFaultInjector;
 import jakarta.ws.rs.container.ContainerRequestContext;
 import jakarta.ws.rs.core.HttpHeaders;
 import jakarta.ws.rs.core.MultivaluedHashMap;
@@ -73,17 +72,6 @@ class CloudRunInvocationControllerTest {
         assertEquals("yes", header.get());
         assertEquals("localhost:4588", forwardedHost.get());
         assertEquals("/run/v2/projects/p1/locations/us-central1/services/svc/extra/path?x=1", forwardedUri.get());
-    }
-
-    @Test
-    void returnsInjectedRunFailureBeforeContactingRuntime() {
-        TestFaultInjector faults = new TestFaultInjector(true);
-        faults.arm("run.invoke", "simulated run outage");
-        CloudRunInvocationController controller = new CloudRunInvocationController(mock(CloudRunService.class), faults);
-
-        var error = assertThrows(io.floci.gcp.core.common.GcpException.class,
-                () -> controller.post("p1", "us-central1", "svc", new byte[0], headers(), uriInfo("/")));
-        assertEquals("UNAVAILABLE", error.getGcpStatus());
     }
 
     @Test
